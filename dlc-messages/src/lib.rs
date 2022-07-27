@@ -31,6 +31,7 @@ pub mod contract_msgs;
 pub mod message_handler;
 pub mod oracle_msgs;
 pub mod segmentation;
+pub mod sub_channel;
 
 #[cfg(any(test, feature = "serde"))]
 pub mod serde_utils;

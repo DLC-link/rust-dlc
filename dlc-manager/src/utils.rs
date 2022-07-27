@@ -18,6 +18,38 @@ use crate::{
 const APPROXIMATE_CET_VBYTES: u64 = 190;
 const APPROXIMATE_CLOSING_VBYTES: u64 = 168;
 
+#[macro_export]
+///
+macro_rules! get_object_in_state {
+    ($manager: ident, $id: expr, $state: ident, $peer_id: expr, $object_type: ident, $get_call: ident) => {{
+        let object = $manager.store.$get_call($id)?;
+        match object {
+            Some(c) => {
+                if let Some(p) = $peer_id as Option<PublicKey> {
+                    if c.get_counter_party_id() != p {
+                        return Err(Error::InvalidParameters(format!(
+                            "Peer {:02x?} is not involved with contract {:02x?}.",
+                            $peer_id, $id
+                        )));
+                    }
+                }
+                match c {
+                    $object_type::$state(s) => Ok(s),
+                    _ => Err(Error::InvalidState(format!(
+                        "Invalid state {:?} expected {}.",
+                        c,
+                        stringify!($state),
+                    ))),
+                }
+            }
+            None => Err(Error::InvalidParameters(format!(
+                "Unknown {} id.",
+                stringify!($object_type)
+            ))),
+        }
+    }};
+}
+
 pub fn get_common_fee(fee_rate: u64) -> u64 {
     (APPROXIMATE_CET_VBYTES + APPROXIMATE_CLOSING_VBYTES) * fee_rate
 }

@@ -24,6 +24,9 @@ extern crate log;
 extern crate rand_chacha;
 extern crate secp256k1_zkp;
 
+#[macro_use]
+mod utils;
+
 pub mod chain_monitor;
 pub mod channel;
 pub mod channel_updater;
@@ -33,7 +36,8 @@ mod conversion_utils;
 pub mod error;
 pub mod manager;
 pub mod payout_curve;
-mod utils;
+pub mod sub_channel_manager;
+pub mod custom_signer;
 
 use bitcoin::{Address, Block, OutPoint, Script, Transaction, TxOut, Txid};
 use chain_monitor::ChainMonitor;
@@ -126,11 +130,11 @@ pub trait Storage {
     /// Return all contracts
     fn get_contracts(&self) -> Result<Vec<Contract>, Error>;
     /// Create a record for the given contract.
-    fn create_contract(&mut self, contract: &OfferedContract) -> Result<(), Error>;
+    fn create_contract(&self, contract: &OfferedContract) -> Result<(), Error>;
     /// Delete the record for the contract with the given id.
-    fn delete_contract(&mut self, id: &ContractId) -> Result<(), Error>;
+    fn delete_contract(&self, id: &ContractId) -> Result<(), Error>;
     /// Update the given contract.
-    fn update_contract(&mut self, contract: &Contract) -> Result<(), Error>;
+    fn update_contract(&self, contract: &Contract) -> Result<(), Error>;
     /// Returns the set of contracts in offered state.
     fn get_contract_offers(&self) -> Result<Vec<OfferedContract>, Error>;
     /// Returns the set of contracts in signed state.
@@ -139,10 +143,9 @@ pub trait Storage {
     fn get_confirmed_contracts(&self) -> Result<Vec<SignedContract>, Error>;
     /// Update the state of the channel and optionally its associated contract
     /// atomically.
-    fn upsert_channel(&mut self, channel: Channel, contract: Option<Contract>)
-        -> Result<(), Error>;
+    fn upsert_channel(&self, channel: Channel, contract: Option<Contract>) -> Result<(), Error>;
     /// Delete the channel with given [`ChannelId`] if any.
-    fn delete_channel(&mut self, channel_id: &ChannelId) -> Result<(), Error>;
+    fn delete_channel(&self, channel_id: &ChannelId) -> Result<(), Error>;
     /// Returns the channel with given [`ChannelId`] if any.
     fn get_channel(&self, channel_id: &ChannelId) -> Result<Option<Channel>, Error>;
     /// Returns the set of [`SignedChannel`] in the store. Returns only the one
@@ -154,7 +157,7 @@ pub trait Storage {
     /// Returns the set of channels in offer state.
     fn get_offered_channels(&self) -> Result<Vec<OfferedChannel>, Error>;
     /// Writes the [`ChainMonitor`] data to the store.
-    fn persist_chain_monitor(&mut self, monitor: &ChainMonitor) -> Result<(), Error>;
+    fn persist_chain_monitor(&self, monitor: &ChainMonitor) -> Result<(), Error>;
     /// Returns the latest [`ChainMonitor`] in the store if any.
     fn get_chain_monitor(&self) -> Result<Option<ChainMonitor>, Error>;
 }

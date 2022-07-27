@@ -34,7 +34,7 @@ pub const MAX_ERROR_EXP: usize = 2;
 pub const BASE: u32 = 2;
 pub const EVENT_MATURITY: u32 = 1623133104;
 pub const EVENT_ID: &str = "Test";
-pub const COLLATERAL: u64 = 100000000;
+pub const COLLATERAL: u64 = 1000000;
 pub const MID_POINT: u64 = 5;
 pub const ROUNDING_MOD: u64 = 1;
 

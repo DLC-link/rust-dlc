@@ -24,6 +24,9 @@ use dlc_manager::contract::offered_contract::OfferedContract;
 use dlc_manager::contract::ser::Serializable;
 use dlc_manager::contract::signed_contract::SignedContract;
 use dlc_manager::contract::{ClosedContract, Contract, FailedAcceptContract, FailedSignContract};
+use dlc_manager::sub_channel_manager::{
+    AcceptedSubChannel, OfferedSubChannel, SignedSubChannel, SubChannel, SubChannelStorage,
+};
 use dlc_manager::{error::Error, ContractId, Storage};
 use sled::transaction::{ConflictableTransactionResult, UnabortableTransactionError};
 use sled::{Db, Transactional, Tree};
@@ -32,8 +35,9 @@ use std::io::{Cursor, Read};
 
 const CONTRACT_TREE: u8 = 1;
 const CHANNEL_TREE: u8 = 2;
-const CHAIN_MONITOR_TREE: u8 = 3;
-const CHAIN_MONITOR_KEY: u8 = 4;
+const SUB_CHANNEL_TREE: u8 = 3;
+const CHAIN_MONITOR_TREE: u8 = 4;
+const CHAIN_MONITOR_KEY: u8 = 5;
 
 /// Implementation of Storage interface using the sled DB backend.
 pub struct SledStorageProvider {
@@ -128,6 +132,15 @@ convertible_enum!(
     SignedChannelStateType
 );
 
+convertible_enum!(
+    enum SubChannelPrefix {;
+        Offered = 500,
+        Accepted,
+        Signed,
+    },
+    SubChannel
+);
+
 fn to_storage_error<T>(e: T) -> Error
 where
     T: std::fmt::Display,
@@ -181,6 +194,10 @@ impl SledStorageProvider {
     fn channel_tree(&self) -> Result<Tree, Error> {
         self.open_tree(&[CHANNEL_TREE])
     }
+
+    fn sub_channel_tree(&self) -> Result<Tree, Error> {
+        self.open_tree(&[SUB_CHANNEL_TREE])
+    }
 }
 
 impl Storage for SledStorageProvider {
@@ -190,7 +207,7 @@ impl Storage for SledStorageProvider {
             .get(contract_id)
             .map_err(to_storage_error)?
         {
-            Some(res) => Ok(Some(deserialize_contract(&res)?)),
+            Some(res) => Ok(Some(contract::deserialize(&res)?)),
             None => Ok(None),
         }
     }
@@ -199,27 +216,27 @@ impl Storage for SledStorageProvider {
         self.contract_tree()?
             .iter()
             .values()
-            .map(|x| deserialize_contract(&x.unwrap()))
+            .map(|x| contract::deserialize(&x.unwrap()))
             .collect::<Result<Vec<Contract>, Error>>()
     }
 
-    fn create_contract(&mut self, contract: &OfferedContract) -> Result<(), Error> {
-        let serialized = serialize_contract(&Contract::Offered(contract.clone()))?;
+    fn create_contract(&self, contract: &OfferedContract) -> Result<(), Error> {
+        let serialized = contract::serialize(&Contract::Offered(contract.clone()))?;
         self.contract_tree()?
             .insert(&contract.id, serialized)
             .map_err(to_storage_error)?;
         Ok(())
     }
 
-    fn delete_contract(&mut self, contract_id: &ContractId) -> Result<(), Error> {
+    fn delete_contract(&self, contract_id: &ContractId) -> Result<(), Error> {
         self.contract_tree()?
             .remove(&contract_id)
             .map_err(to_storage_error)?;
         Ok(())
     }
 
-    fn update_contract(&mut self, contract: &Contract) -> Result<(), Error> {
-        let serialized = serialize_contract(contract)?;
+    fn update_contract(&self, contract: &Contract) -> Result<(), Error> {
+        let serialized = contract::serialize(contract)?;
         self.contract_tree()?
             .transaction::<_, _, UnabortableTransactionError>(|db| {
                 match contract {
@@ -260,14 +277,10 @@ impl Storage for SledStorageProvider {
         )
     }
 
-    fn upsert_channel(
-        &mut self,
-        channel: Channel,
-        contract: Option<Contract>,
-    ) -> Result<(), Error> {
-        let serialized = serialize_channel(&channel)?;
+    fn upsert_channel(&self, channel: Channel, contract: Option<Contract>) -> Result<(), Error> {
+        let serialized = channel::serialize(&channel)?;
         let serialized_contract = match contract.as_ref() {
-            Some(c) => Some(serialize_contract(c)?),
+            Some(c) => Some(contract::serialize(c)?),
             None => None,
         };
         let channel_tree = self.channel_tree()?;
@@ -301,7 +314,7 @@ impl Storage for SledStorageProvider {
         Ok(())
     }
 
-    fn delete_channel(&mut self, channel_id: &dlc_manager::ChannelId) -> Result<(), Error> {
+    fn delete_channel(&self, channel_id: &dlc_manager::ChannelId) -> Result<(), Error> {
         self.channel_tree()?
             .remove(channel_id)
             .map_err(to_storage_error)?;
@@ -314,7 +327,7 @@ impl Storage for SledStorageProvider {
             .get(channel_id)
             .map_err(to_storage_error)?
         {
-            Some(res) => Ok(Some(deserialize_channel(&res)?)),
+            Some(res) => Ok(Some(channel::deserialize(&res)?)),
             None => Ok(None),
         }
     }
@@ -346,7 +359,7 @@ impl Storage for SledStorageProvider {
         )
     }
 
-    fn persist_chain_monitor(&mut self, monitor: &ChainMonitor) -> Result<(), Error> {
+    fn persist_chain_monitor(&self, monitor: &ChainMonitor) -> Result<(), Error> {
         self.open_tree(&[CHAIN_MONITOR_TREE])?
             .insert(&[CHAIN_MONITOR_KEY], monitor.serialize()?)
             .map_err(|e| Error::StorageError(format!("Error writing chain monitor: {}", e)))?;
@@ -368,6 +381,30 @@ impl Storage for SledStorageProvider {
     }
 }
 
+impl SubChannelStorage for SledStorageProvider {
+    fn upsert_sub_channel(&self, subchannel: &SubChannel) -> Result<(), Error> {
+        let serialized = sub_channel::serialize(&subchannel)?;
+        self.sub_channel_tree()?
+            .insert(subchannel.get_id(), serialized)
+            .map_err(to_storage_error)?;
+        Ok(())
+    }
+
+    fn get_sub_channel(
+        &self,
+        channel_id: dlc_manager::ChannelId,
+    ) -> Result<Option<dlc_manager::sub_channel_manager::SubChannel>, Error> {
+        match self
+            .sub_channel_tree()?
+            .get(channel_id)
+            .map_err(to_storage_error)?
+        {
+            Some(res) => Ok(Some(sub_channel::deserialize(&res)?)),
+            None => Ok(None),
+        }
+    }
+}
+
 fn insert_contract(
     db: &sled::transaction::TransactionalTree,
     serialized: Vec<u8>,
@@ -383,103 +420,72 @@ fn insert_contract(
     db.insert(&contract.get_id(), serialized)
 }
 
-fn serialize_contract(contract: &Contract) -> Result<Vec<u8>, ::std::io::Error> {
-    let serialized = match contract {
-        Contract::Offered(o) | Contract::Rejected(o) => o.serialize(),
-        Contract::Accepted(o) => o.serialize(),
-        Contract::Signed(o) | Contract::Confirmed(o) | Contract::Refunded(o) => o.serialize(),
-        Contract::FailedAccept(c) => c.serialize(),
-        Contract::FailedSign(c) => c.serialize(),
-        Contract::Closed(c) => c.serialize(),
+macro_rules! serialize_object {
+    ($type: ident, $prefixtype: ident, $name: ident, $(($state: ident, $cstate: ident)),*) => {
+        mod $name {
+            use super::*;
+            pub(super) fn serialize($name: &$type) -> Result<Vec<u8>, ::std::io::Error> {
+                let mut serialized = match $name {
+                    $(
+                        $type::$state(o) => o.serialize()?,
+                    )*
+                };
+                let mut res = Vec::with_capacity(serialized.len() + 1);
+                res.push($prefixtype::get_prefix($name));
+                res.append(&mut serialized);
+                Ok(res)
+            }
+
+            pub(super) fn deserialize(buff: &sled::IVec) -> Result<$type, Error> {
+                let mut cursor = ::std::io::Cursor::new(buff);
+                let mut prefix = [0u8; 1];
+                cursor.read_exact(&mut prefix)?;
+                let prefix: $prefixtype = prefix[0].try_into()?;
+                let $name = match prefix {
+                    $($prefixtype::$state => {
+                        $type::$state($cstate::deserialize(&mut cursor).map_err(to_storage_error)?)
+                    })*
+                };
+                Ok($name)
+            }
+        }
     };
-    let mut serialized = serialized?;
-    let mut res = Vec::with_capacity(serialized.len() + 1);
-    res.push(ContractPrefix::get_prefix(contract));
-    res.append(&mut serialized);
-    Ok(res)
 }
 
-fn deserialize_contract(buff: &sled::IVec) -> Result<Contract, Error> {
-    let mut cursor = ::std::io::Cursor::new(buff);
-    let mut prefix = [0u8; 1];
-    cursor.read_exact(&mut prefix)?;
-    let contract_prefix: ContractPrefix = prefix[0].try_into()?;
-    let contract = match contract_prefix {
-        ContractPrefix::Offered => {
-            Contract::Offered(OfferedContract::deserialize(&mut cursor).map_err(to_storage_error)?)
-        }
-        ContractPrefix::Accepted => Contract::Accepted(
-            AcceptedContract::deserialize(&mut cursor).map_err(to_storage_error)?,
-        ),
-        ContractPrefix::Signed => {
-            Contract::Signed(SignedContract::deserialize(&mut cursor).map_err(to_storage_error)?)
-        }
-        ContractPrefix::Confirmed => {
-            Contract::Confirmed(SignedContract::deserialize(&mut cursor).map_err(to_storage_error)?)
-        }
-        ContractPrefix::Closed => {
-            Contract::Closed(ClosedContract::deserialize(&mut cursor).map_err(to_storage_error)?)
-        }
-        ContractPrefix::FailedAccept => Contract::FailedAccept(
-            FailedAcceptContract::deserialize(&mut cursor).map_err(to_storage_error)?,
-        ),
-        ContractPrefix::FailedSign => Contract::FailedSign(
-            FailedSignContract::deserialize(&mut cursor).map_err(to_storage_error)?,
-        ),
-        ContractPrefix::Refunded => {
-            Contract::Refunded(SignedContract::deserialize(&mut cursor).map_err(to_storage_error)?)
-        }
-        ContractPrefix::Rejected => {
-            Contract::Rejected(OfferedContract::deserialize(&mut cursor).map_err(to_storage_error)?)
-        }
-    };
-    Ok(contract)
-}
+serialize_object!(
+    Contract,
+    ContractPrefix,
+    contract,
+    (Offered, OfferedContract),
+    (Rejected, OfferedContract),
+    (Accepted, AcceptedContract),
+    (Confirmed, SignedContract),
+    (Refunded, SignedContract),
+    (Signed, SignedContract),
+    (FailedAccept, FailedAcceptContract),
+    (FailedSign, FailedSignContract),
+    (Closed, ClosedContract)
+);
 
-fn serialize_channel(channel: &Channel) -> Result<Vec<u8>, ::std::io::Error> {
-    let serialized = match channel {
-        Channel::Offered(o) => o.serialize(),
-        Channel::Accepted(a) => a.serialize(),
-        Channel::Signed(s) => s.serialize(),
-        Channel::FailedAccept(f) => f.serialize(),
-        Channel::FailedSign(f) => f.serialize(),
-    };
-    let mut serialized = serialized?;
-    let mut res = Vec::with_capacity(serialized.len() + 1);
-    res.push(ChannelPrefix::get_prefix(channel));
-    if let Channel::Signed(s) = channel {
-        res.push(SignedChannelPrefix::get_prefix(&s.state.get_type()))
-    }
-    res.append(&mut serialized);
-    Ok(res)
-}
+serialize_object!(
+    Channel,
+    ChannelPrefix,
+    channel,
+    (Offered, OfferedChannel),
+    (Accepted, AcceptedChannel),
+    (Signed, SignedChannel),
+    (FailedAccept, FailedAccept),
+    (FailedSign, FailedSign)
+);
 
-fn deserialize_channel(buff: &sled::IVec) -> Result<Channel, Error> {
-    let mut cursor = ::std::io::Cursor::new(buff);
-    let mut prefix = [0u8; 1];
-    cursor.read_exact(&mut prefix)?;
-    let channel_prefix: ChannelPrefix = prefix[0].try_into()?;
-    let channel = match channel_prefix {
-        ChannelPrefix::Offered => {
-            Channel::Offered(OfferedChannel::deserialize(&mut cursor).map_err(to_storage_error)?)
-        }
-        ChannelPrefix::Accepted => {
-            Channel::Accepted(AcceptedChannel::deserialize(&mut cursor).map_err(to_storage_error)?)
-        }
-        ChannelPrefix::Signed => {
-            // Skip the channel state prefix.
-            cursor.set_position(cursor.position() + 1);
-            Channel::Signed(SignedChannel::deserialize(&mut cursor).map_err(to_storage_error)?)
-        }
-        ChannelPrefix::FailedAccept => {
-            Channel::FailedAccept(FailedAccept::deserialize(&mut cursor).map_err(to_storage_error)?)
-        }
-        ChannelPrefix::FailedSign => {
-            Channel::FailedSign(FailedSign::deserialize(&mut cursor).map_err(to_storage_error)?)
-        }
-    };
-    Ok(channel)
-}
+serialize_object!(
+    SubChannel,
+    SubChannelPrefix,
+    sub_channel,
+    (Offered, OfferedSubChannel),
+    (Accepted, AcceptedSubChannel),
+    (Signed, SignedSubChannel)
+);
 
 #[cfg(test)]
 mod tests {
@@ -509,7 +515,7 @@ mod tests {
 
     sled_test!(
         create_contract_can_be_retrieved,
-        |mut storage: SledStorageProvider| {
+        |storage: SledStorageProvider| {
             let serialized = include_bytes!("../test_files/Offered");
             let contract = deserialize_object(serialized);
 
@@ -531,7 +537,7 @@ mod tests {
 
     sled_test!(
         update_contract_is_updated,
-        |mut storage: SledStorageProvider| {
+        |storage: SledStorageProvider| {
             let serialized = include_bytes!("../test_files/Offered");
             let offered_contract = deserialize_object(serialized);
             let serialized = include_bytes!("../test_files/Accepted");
@@ -558,7 +564,7 @@ mod tests {
 
     sled_test!(
         delete_contract_is_deleted,
-        |mut storage: SledStorageProvider| {
+        |storage: SledStorageProvider| {
             let serialized = include_bytes!("../test_files/Offered");
             let contract = deserialize_object(serialized);
             storage
@@ -765,7 +771,7 @@ mod tests {
 
     sled_test!(
         persist_chain_monitor_test,
-        |mut storage: SledStorageProvider| {
+        |storage: SledStorageProvider| {
             let chain_monitor = ChainMonitor::new(123);
 
             storage

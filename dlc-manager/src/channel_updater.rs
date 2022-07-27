@@ -24,8 +24,10 @@ use crate::{
 };
 use bitcoin::{OutPoint, Script, Transaction, TxIn, Witness};
 use dlc::{
-    channel::{get_tx_adaptor_signature, verify_tx_adaptor_signature, DlcChannelTransactions},
-    PartyParams,
+    channel::{
+        get_tx_adaptor_signature, verify_tx_adaptor_signature, DlcChannelTransactions, RevokeParams,
+    },
+    PartyParams, Payout,
 };
 use dlc_messages::{
     channel::{
@@ -38,7 +40,9 @@ use dlc_messages::{
 use lightning::ln::chan_utils::{
     build_commitment_secret, derive_private_key, CounterpartyCommitmentSecrets,
 };
-use secp256k1_zkp::{All, EcdsaAdaptorSignature, PublicKey, Secp256k1, SecretKey, Signing};
+use secp256k1_zkp::{
+    ecdsa::Signature, All, EcdsaAdaptorSignature, PublicKey, Secp256k1, SecretKey, Signing,
+};
 
 const INITIAL_UPDATE_NUMBER: u64 = (1 << 48) - 1;
 
@@ -137,6 +141,65 @@ pub fn accept_channel_offer<W: Deref>(
 where
     W::Target: Wallet,
 {
+    let tx_create = |offer_params: &PartyParams,
+                     accept_params: &PartyParams,
+                     offer_revoke_params: &RevokeParams,
+                     accept_revoke_params: &RevokeParams,
+                     payouts: &[Payout],
+                     refund_lock_time: u32,
+                     fee_rate_per_vb: u64,
+                     cet_lock_time: u32,
+                     cet_nsequence: u32| {
+        dlc::channel::create_channel_transactions(
+            offer_params,
+            accept_params,
+            offer_revoke_params,
+            accept_revoke_params,
+            payouts,
+            refund_lock_time,
+            fee_rate_per_vb,
+            0,
+            cet_lock_time,
+            offered_contract.fund_output_serial_id,
+            cet_nsequence,
+        )
+    };
+    accept_channel_offer_internal(
+        secp,
+        offered_channel,
+        offered_contract,
+        wallet,
+        &tx_create,
+        None,
+        None,
+        None,
+    )
+}
+
+pub(crate) fn accept_channel_offer_internal<W: Deref, F>(
+    secp: &Secp256k1<All>,
+    offered_channel: &OfferedChannel,
+    offered_contract: &OfferedContract,
+    wallet: &W,
+    tx_create: &F,
+    buffer_input_spk: Option<Script>,
+    buffer_input_value: Option<u64>,
+    own_buffer_adaptor_sk: Option<SecretKey>,
+) -> Result<(AcceptedChannel, AcceptedContract, AcceptChannel), Error>
+where
+    W::Target: Wallet,
+    F: Fn(
+        &PartyParams,
+        &PartyParams,
+        &RevokeParams,
+        &RevokeParams,
+        &[Payout],
+        u32,
+        u64,
+        u32,
+        u32,
+    ) -> Result<DlcChannelTransactions, dlc::Error>,
+{
     assert_eq!(offered_channel.offered_contract_id, offered_contract.id);
 
     let (accept_params, _, funding_inputs) = crate::utils::get_party_params(
@@ -177,7 +240,7 @@ where
         buffer_transaction,
         buffer_script_pubkey,
         dlc_transactions,
-    } = dlc::channel::create_channel_transactions(
+    } = tx_create(
         &offered_contract.offer_params,
         &accept_params,
         &offer_revoke_params,
@@ -185,9 +248,7 @@ where
         &offered_contract.contract_info[0].get_payouts(total_collateral)?,
         offered_contract.contract_timeout,
         offered_contract.fee_rate_per_vb,
-        0,
         offered_contract.contract_maturity_bound,
-        offered_contract.fund_output_serial_id,
         offered_channel.cet_nsequence,
     )?;
 
@@ -204,12 +265,18 @@ where
 
     let own_fund_sk = wallet.get_secret_key_for_pubkey(&accept_params.fund_pubkey)?;
 
+    let buffer_input_spk = buffer_input_spk
+        .as_ref()
+        .unwrap_or(&dlc_transactions.funding_script_pubkey);
+    let buffer_input_value = buffer_input_value.unwrap_or(dlc_transactions.get_fund_output().value);
+    let own_buffer_adaptor_sk = own_buffer_adaptor_sk.as_ref().unwrap_or(&own_fund_sk);
+
     let buffer_adaptor_signature = get_tx_adaptor_signature(
         secp,
         &buffer_transaction,
-        dlc_transactions.get_fund_output().value,
-        &dlc_transactions.funding_script_pubkey,
-        &own_fund_sk,
+        buffer_input_value,
+        buffer_input_spk,
+        &own_buffer_adaptor_sk,
         &offer_revoke_params.publish_pk.inner,
     )?;
 
@@ -263,6 +330,71 @@ pub fn verify_and_sign_accepted_channel<S: Deref>(
 where
     S::Target: Signer,
 {
+    let tx_create = |offer_params: &PartyParams,
+                     accept_params: &PartyParams,
+                     offer_revoke_params: &RevokeParams,
+                     accept_revoke_params: &RevokeParams,
+                     payouts: &[Payout],
+                     refund_lock_time: u32,
+                     fee_rate_per_vb: u64,
+                     cet_lock_time: u32,
+                     cet_nsequence: u32| {
+        dlc::channel::create_channel_transactions(
+            offer_params,
+            accept_params,
+            offer_revoke_params,
+            accept_revoke_params,
+            payouts,
+            refund_lock_time,
+            fee_rate_per_vb,
+            0,
+            cet_lock_time,
+            offered_contract.fund_output_serial_id,
+            cet_nsequence,
+        )
+    };
+    verify_and_sign_accepted_channel_internal(
+        secp,
+        offered_channel,
+        offered_contract,
+        accept_channel,
+        cet_nsequence,
+        signer,
+        &tx_create,
+        None,
+        None,
+        None,
+        None,
+    )
+}
+
+pub(crate) fn verify_and_sign_accepted_channel_internal<S: Deref, F>(
+    secp: &Secp256k1<All>,
+    offered_channel: &OfferedChannel,
+    offered_contract: &OfferedContract,
+    accept_channel: &AcceptChannel,
+    cet_nsequence: u32,
+    signer: &S,
+    tx_create: &F,
+    buffer_input_spk: Option<Script>,
+    buffer_input_value: Option<u64>,
+    counter_buffer_own_pk: Option<PublicKey>,
+    own_buffer_adaptor_sk: Option<SecretKey>,
+) -> Result<(SignedChannel, SignedContract, SignChannel), Error>
+where
+    S::Target: Signer,
+    F: Fn(
+        &PartyParams,
+        &PartyParams,
+        &RevokeParams,
+        &RevokeParams,
+        &[Payout],
+        u32,
+        u64,
+        u32,
+        u32,
+    ) -> Result<DlcChannelTransactions, dlc::Error>,
+{
     let (tx_input_infos, input_amount) =
         crate::conversion_utils::get_tx_input_infos(&accept_channel.funding_inputs)?;
 
@@ -301,6 +433,7 @@ where
         &accept_points.revocation_basepoint,
         &offered_channel.per_update_point,
     )?;
+
     let accept_revoke_params = accept_points.get_revokable_params(
         secp,
         &offered_channel.party_points.revocation_basepoint,
@@ -313,7 +446,7 @@ where
         buffer_transaction,
         dlc_transactions,
         buffer_script_pubkey,
-    } = dlc::channel::create_channel_transactions(
+    } = tx_create(
         &offered_contract.offer_params,
         &accept_params,
         &offer_revoke_params,
@@ -321,9 +454,7 @@ where
         &offered_contract.contract_info[0].get_payouts(total_collateral)?,
         offered_contract.contract_timeout,
         offered_contract.fee_rate_per_vb,
-        0,
         offered_contract.contract_maturity_bound,
-        offered_contract.fund_output_serial_id,
         cet_nsequence,
     )?;
 
@@ -355,22 +486,32 @@ where
         Some(channel_id),
     )?;
 
+    let buffer_input_spk = buffer_input_spk
+        .as_ref()
+        .unwrap_or(&dlc_transactions.funding_script_pubkey);
+    let buffer_input_value = buffer_input_value.unwrap_or(dlc_transactions.get_fund_output().value);
+    let counter_buffer_adaptor_key = counter_buffer_own_pk
+        .as_ref()
+        .unwrap_or(&signed_contract.accepted_contract.accept_params.fund_pubkey);
+
     verify_tx_adaptor_signature(
         secp,
         &buffer_transaction,
-        dlc_transactions.get_fund_output().value,
-        &dlc_transactions.funding_script_pubkey,
-        &signed_contract.accepted_contract.accept_params.fund_pubkey,
+        buffer_input_value,
+        buffer_input_spk,
+        counter_buffer_adaptor_key,
         &offer_revoke_params.publish_pk.inner,
         &accept_channel.buffer_adaptor_signature,
     )?;
 
+    let own_buffer_adaptor_sk = own_buffer_adaptor_sk.as_ref().unwrap_or(&offer_fund_sk);
+
     let own_buffer_adaptor_signature = get_tx_adaptor_signature(
         secp,
         &buffer_transaction,
-        dlc_transactions.get_fund_output().value,
-        &dlc_transactions.funding_script_pubkey,
-        &offer_fund_sk,
+        buffer_input_value,
+        buffer_input_spk,
+        &own_buffer_adaptor_sk,
         &accept_revoke_params.publish_pk.inner,
     )?;
 
@@ -433,6 +574,32 @@ pub fn verify_signed_channel<S: Deref>(
 where
     S::Target: Signer,
 {
+    verify_signed_channel_internal(
+        secp,
+        accepted_channel,
+        accepted_contract,
+        sign_channel,
+        signer,
+        None,
+        None,
+        None,
+    )
+}
+
+pub(crate) fn verify_signed_channel_internal<S: Deref>(
+    secp: &Secp256k1<All>,
+    accepted_channel: &AcceptedChannel,
+    accepted_contract: &AcceptedContract,
+    sign_channel: &SignChannel,
+    signer: &S,
+    // TODO(tibo): remove these options.
+    buffer_input_spk: Option<Script>,
+    buffer_input_value: Option<u64>,
+    counter_buffer_own_pk: Option<PublicKey>,
+) -> Result<(SignedChannel, SignedContract), Error>
+where
+    S::Target: Signer,
+{
     let own_publish_pk = accepted_channel
         .accept_base_points
         .get_publish_pk(secp, &accepted_channel.accept_per_update_point)?;
@@ -440,12 +607,22 @@ where
     let counter_own_pk = accepted_channel
         .offer_base_points
         .get_own_pk(secp, &accepted_channel.offer_per_update_point)?;
+
+    let buffer_input_spk = buffer_input_spk
+        .as_ref()
+        .unwrap_or(&accepted_contract.dlc_transactions.funding_script_pubkey);
+    let buffer_input_value =
+        buffer_input_value.unwrap_or(accepted_contract.dlc_transactions.get_fund_output().value);
+    let counter_buffer_adaptor_key = counter_buffer_own_pk
+        .as_ref()
+        .unwrap_or(&accepted_contract.offered_contract.offer_params.fund_pubkey);
+
     verify_tx_adaptor_signature(
         secp,
         &accepted_channel.buffer_transaction,
-        accepted_contract.dlc_transactions.get_fund_output().value,
-        &accepted_contract.dlc_transactions.funding_script_pubkey,
-        &accepted_contract.offered_contract.offer_params.fund_pubkey,
+        buffer_input_value,
+        buffer_input_spk,
+        &counter_buffer_adaptor_key,
         &own_publish_pk,
         &sign_channel.buffer_adaptor_signature,
     )?;
@@ -1123,6 +1300,7 @@ where
         offered_contract.fee_rate_per_vb,
         0,
         cet_nsequence,
+        None,
     )?;
 
     let buffer_adaptor_signature = get_tx_adaptor_signature(
@@ -1233,6 +1411,7 @@ where
         offered_contract.fee_rate_per_vb,
         0,
         cet_nsequence,
+        None,
     )?;
 
     let offer_own_sk = derive_private_key(secp, &offer_per_update_point, &own_base_secret_key)?;
@@ -1754,6 +1933,50 @@ pub fn initiate_unilateral_close_established_channel<S: Deref>(
 where
     S::Target: Signer,
 {
+    let buffer_input_spk = signed_channel.fund_script_pubkey.clone();
+    let buffer_input_sk =
+        signer.get_secret_key_for_pubkey(&signed_channel.own_params.fund_pubkey)?;
+    let buffer_input_value = signed_channel.fund_tx.output[signed_channel.fund_output_index].value;
+    let counter_fund_pk = signed_channel.counter_params.fund_pubkey;
+    let mut sign_cb = |buffer_tx: &mut Transaction, counter_buffer_signature: &Signature| {
+        dlc::util::sign_multi_sig_input(
+            secp,
+            buffer_tx,
+            counter_buffer_signature,
+            &counter_fund_pk,
+            &buffer_input_sk,
+            &buffer_input_spk,
+            buffer_input_value,
+            0,
+        )
+        .unwrap();
+    };
+    initiate_unilateral_close_established_channel_internal(
+        secp,
+        signed_channel,
+        confirmed_contract,
+        contract_info,
+        attestations,
+        adaptor_info,
+        signer,
+        &mut sign_cb,
+    )
+}
+
+pub(crate) fn initiate_unilateral_close_established_channel_internal<S: Deref, F>(
+    secp: &Secp256k1<All>,
+    signed_channel: &mut SignedChannel,
+    confirmed_contract: &SignedContract,
+    contract_info: &ContractInfo,
+    attestations: &[(usize, OracleAttestation)],
+    adaptor_info: &AdaptorInfo,
+    signer: &S,
+    sign_cb: &mut F,
+) -> Result<(), Error>
+where
+    S::Target: Signer,
+    F: FnMut(&mut Transaction, &Signature),
+{
     let (buffer_adaptor_signature, buffer_transaction) = get_signed_channel_state!(
         signed_channel,
         Established,
@@ -1774,18 +1997,7 @@ where
 
     let counter_buffer_signature = buffer_adaptor_signature.decrypt(&publish_sk)?;
 
-    let fund_sk = signer.get_secret_key_for_pubkey(&signed_channel.own_params.fund_pubkey)?;
-
-    dlc::util::sign_multi_sig_input(
-        secp,
-        &mut buffer_transaction,
-        &counter_buffer_signature,
-        &signed_channel.counter_params.fund_pubkey,
-        &fund_sk,
-        &signed_channel.fund_script_pubkey,
-        signed_channel.fund_tx.output[signed_channel.fund_output_index].value,
-        0,
-    )?;
+    sign_cb(&mut buffer_transaction, &counter_buffer_signature);
 
     let (range_info, oracle_sigs) =
         crate::utils::get_range_info_and_oracle_sigs(contract_info, adaptor_info, attestations)?;

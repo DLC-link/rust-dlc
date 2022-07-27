@@ -1,6 +1,7 @@
 //! # Bitcoin rpc provider
 
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -8,6 +9,7 @@ use std::time::Duration;
 use bitcoin::consensus::encode::Error as EncodeError;
 use bitcoin::secp256k1::rand::thread_rng;
 use bitcoin::secp256k1::{PublicKey, SecretKey};
+use bitcoin::util::uint::Uint256;
 use bitcoin::{
     consensus::Decodable, network::constants::Network, Amount, PrivateKey, Script, Transaction,
     Txid,
@@ -18,7 +20,8 @@ use bitcoincore_rpc_json::AddressType;
 use dlc_manager::error::Error as ManagerError;
 use dlc_manager::{Blockchain, Signer, Utxo, Wallet};
 use json::EstimateMode;
-use lightning::chain::chaininterface::{ConfirmationTarget, FeeEstimator};
+use lightning::chain::chaininterface::{BroadcasterInterface, ConfirmationTarget, FeeEstimator};
+use lightning_block_sync::{BlockHeaderData, BlockSource};
 use log::error;
 use rust_bitcoin_coin_selection::select_coins;
 
@@ -118,6 +121,10 @@ impl BitcoinCoreProvider {
         let fees = Arc::new(fees);
         poll_for_fee_estimates(client.clone(), fees.clone());
         BitcoinCoreProvider { client, fees }
+    }
+
+    pub fn get_client(&self) -> Arc<Mutex<Client>> {
+        self.client.clone()
     }
 }
 
@@ -323,6 +330,7 @@ impl Wallet for BitcoinCoreProvider {
 
 impl Blockchain for BitcoinCoreProvider {
     fn send_transaction(&self, transaction: &Transaction) -> Result<(), ManagerError> {
+        println!("SEDNING: {}", transaction.txid());
         self.client
             .lock()
             .unwrap()
@@ -428,4 +436,53 @@ fn poll_for_fee_estimates(client: Arc<Mutex<Client>>, fees: Arc<HashMap<Target, 
 
         std::thread::sleep(Duration::from_secs(60));
     });
+}
+
+impl BroadcasterInterface for BitcoinCoreProvider {
+    fn broadcast_transaction(&self, tx: &Transaction) {
+        use bitcoin::consensus::Encodable;
+        use std::fmt::Write;
+        let mut writer = Vec::new();
+        tx.consensus_encode(&mut writer).unwrap();
+        let mut serialized = String::new();
+        for x in writer {
+            let _ = write!(&mut serialized, "{:02x}", x).unwrap();
+        }
+        println!("{}", serialized);
+        self.send_transaction(tx).expect("Not to error.");
+    }
+}
+
+impl BlockSource for BitcoinCoreProvider {
+    fn get_header<'a>(
+        &'a self,
+        header_hash: &'a bitcoin::BlockHash,
+        _height_hint: Option<u32>,
+    ) -> lightning_block_sync::AsyncBlockSourceResult<'a, lightning_block_sync::BlockHeaderData>
+    {
+        let client = self.client.lock().unwrap();
+        let header_info = client.get_block_header_info(header_hash).unwrap();
+        let header = client.get_block_header(header_hash).unwrap();
+        let block_header_data = BlockHeaderData {
+            header,
+            height: header_info.height as u32,
+            chainwork: Uint256::from_be_bytes(header_info.chainwork.try_into().unwrap()),
+        };
+        Box::pin(core::future::ready(Ok(block_header_data)))
+    }
+
+    fn get_block<'a>(
+        &'a self,
+        header_hash: &'a bitcoin::BlockHash,
+    ) -> lightning_block_sync::AsyncBlockSourceResult<'a, bitcoin::Block> {
+        let block = self.client.lock().unwrap().get_block(header_hash).unwrap();
+        Box::pin(core::future::ready(Ok(block)))
+    }
+
+    fn get_best_block<'a>(
+        &'a self,
+    ) -> lightning_block_sync::AsyncBlockSourceResult<(bitcoin::BlockHash, Option<u32>)> {
+        let best_block = self.client.lock().unwrap().get_best_block_hash().unwrap();
+        Box::pin(core::future::ready(Ok((best_block, None))))
+    }
 }

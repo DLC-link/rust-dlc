@@ -497,7 +497,7 @@ fn channel_execution_test(test_params: TestParams, path: TestPath) {
                             (second, second_send, first, first_send)
                         };
 
-                    first.lock().unwrap().get_mut_store().save();
+                    first.lock().unwrap().get_store().save();
 
                     settle_channel(
                         first.clone(),
@@ -562,7 +562,7 @@ fn channel_execution_test(test_params: TestParams, path: TestPath) {
                             );
                         }
                         TestPath::RenewedClose | TestPath::SettleCheat => {
-                            first.lock().unwrap().get_mut_store().save();
+                            first.lock().unwrap().get_store().save();
 
                             renew_channel(
                                 first.clone(),
@@ -692,7 +692,7 @@ fn cheat_punish(
     sink_address: Address,
     established: bool,
 ) {
-    first.lock().unwrap().get_mut_store().rollback();
+    first.lock().unwrap().get_store().rollback();
 
     if established {
         first
