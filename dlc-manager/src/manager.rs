@@ -15,7 +15,8 @@ use crate::contract::{
 };
 use crate::contract_updater::{accept_contract, verify_accepted_and_sign_contract};
 use crate::error::Error;
-use crate::Signer;
+use crate::sub_channel_manager::{ClosingSubChannel, SubChannel};
+use crate::{get_sub_channel_in_state, Signer};
 use crate::{ChannelId, ContractId};
 use bitcoin::Address;
 use bitcoin::Transaction;
@@ -123,7 +124,19 @@ macro_rules! check_for_timed_out_channels {
             if let SignedChannelState::$state { timeout, .. } = channel.state {
                 let is_timed_out = timeout < $manager.time.unix_time_now();
                 if is_timed_out {
-                    match $manager.force_close_channel_internal(channel) {
+                    let sub_channel = if channel.is_sub_channel {
+                        unimplemented!();
+                        // let s = get_sub_channel_in_state!(
+                        //     $manager,
+                        //     channel.channel_id,
+                        //     Signed,
+                        //     None::<PublicKey>
+                        // )?;
+                        // Some(s)
+                    } else {
+                        None
+                    };
+                    match $manager.force_close_channel_internal(channel, sub_channel) {
                         Err(e) => error!("Error force closing channel {}", e),
                         _ => {}
                     }
@@ -676,7 +689,7 @@ where
     pub fn force_close_channel(&self, channel_id: &ChannelId) -> Result<(), Error> {
         let channel = get_channel_in_state!(self, channel_id, Signed, None as Option<PublicKey>)?;
 
-        self.force_close_channel_internal(channel)
+        self.force_close_channel_internal(channel, None)
     }
 
     /// Offer to settle the balance of a channel so that the counter party gets
@@ -1753,7 +1766,20 @@ where
         Ok(())
     }
 
-    fn force_close_channel_internal(&self, mut channel: SignedChannel) -> Result<(), Error> {
+    pub(crate) fn force_close_sub_channel(
+        &self,
+        channel_id: &ChannelId,
+        sub_channel: ClosingSubChannel,
+    ) -> Result<(), Error> {
+        let channel = get_channel_in_state!(self, channel_id, Signed, None as Option<PublicKey>)?;
+        self.force_close_channel_internal(channel, Some(sub_channel))
+    }
+
+    fn force_close_channel_internal(
+        &self,
+        mut channel: SignedChannel,
+        sub_channel: Option<ClosingSubChannel>,
+    ) -> Result<(), Error> {
         match channel.state {
             SignedChannelState::Established { .. } => {
                 self.initiate_unilateral_close_established_channel(channel)
@@ -1771,7 +1797,7 @@ where
                     .roll_back_state
                     .take()
                     .expect("to have a rollback state");
-                self.force_close_channel_internal(channel)
+                self.force_close_channel_internal(channel, sub_channel)
             }
             SignedChannelState::Closing { .. } => Err(Error::InvalidState(
                 "Channel is already closing.".to_string(),
@@ -1805,6 +1831,18 @@ where
                 Error::InvalidState("Could not get closable contract info".to_string())
             })?;
 
+        let sub_channel = if signed_channel.is_sub_channel {
+            let sub_channel = get_sub_channel_in_state!(
+                self,
+                signed_channel.channel_id,
+                Closing,
+                None::<PublicKey>
+            )?;
+            Some(sub_channel)
+        } else {
+            None
+        };
+
         crate::channel_updater::initiate_unilateral_close_established_channel(
             &self.secp,
             &mut signed_channel,
@@ -1813,59 +1851,7 @@ where
             &attestations,
             adaptor_info,
             &self.wallet,
-        )?;
-
-        let buffer_transaction =
-            get_signed_channel_state!(signed_channel, Closing, ref buffer_transaction)?;
-
-        self.blockchain.send_transaction(buffer_transaction)?;
-
-        self.chain_monitor
-            .lock()
-            .unwrap()
-            .remove_tx(&buffer_transaction.txid());
-
-        self.store
-            .upsert_channel(Channel::Signed(signed_channel), None)?;
-
-        self.store
-            .persist_chain_monitor(&self.chain_monitor.lock().unwrap())?;
-
-        Ok(())
-    }
-
-    pub(crate) fn initiate_unilateral_close_established_channel_internal<FS>(
-        &self,
-        mut signed_channel: SignedChannel,
-        sign_cb: &mut FS,
-    ) -> Result<(), Error>
-    where
-        FS: FnMut(&mut Transaction, &Signature),
-    {
-        let contract_id = signed_channel.get_contract_id().ok_or_else(|| {
-            Error::InvalidState(
-                "Expected to be in a state with an associated contract id but was not.".to_string(),
-            )
-        })?;
-
-        let confirmed_contract =
-            get_contract_in_state!(self, &contract_id, Confirmed, None as Option<PublicKey>)?;
-
-        let (contract_info, adaptor_info, attestations) = self
-            .get_closable_contract_info(&confirmed_contract)
-            .ok_or_else(|| {
-                Error::InvalidState("Could not get closable contract info".to_string())
-            })?;
-
-        crate::channel_updater::initiate_unilateral_close_established_channel_internal(
-            &self.secp,
-            &mut signed_channel,
-            &confirmed_contract,
-            contract_info,
-            &attestations,
-            adaptor_info,
-            &self.wallet,
-            sign_cb,
+            sub_channel,
         )?;
 
         let buffer_transaction =

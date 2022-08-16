@@ -22,7 +22,10 @@ use dlc_manager::{
     sub_channel_manager::SubChannelManager,
     Blockchain, Oracle,
 };
-use dlc_messages::sub_channel::{SubChannelInfo, SubChannelMessage};
+use dlc_messages::{
+    sub_channel::{SubChannelInfo, SubChannelMessage},
+    Message,
+};
 use lightning::{
     chain::{
         keysinterface::{KeysInterface, KeysManager, Recipient},
@@ -105,8 +108,12 @@ struct LnDlcParty {
         Arc<ChannelManager>,
         Arc<MemoryStorage>,
         Arc<BitcoinCoreProvider>,
-        Box<DlcChannelManager>,
+        Arc<MockOracle>,
+        Arc<MockTime>,
+        Arc<BitcoinCoreProvider>,
+        Arc<DlcChannelManager>,
     >,
+    dlc_manager: Arc<DlcChannelManager>,
 }
 
 impl LnDlcParty {
@@ -209,7 +216,6 @@ impl Score for TestScorer {
 
 impl EventHandler for LnDlcParty {
     fn handle_event(&self, event: &lightning::util::events::Event) {
-        println!("{:?}", event);
         match event {
             Event::FundingGenerationReady {
                 temporary_channel_id,
@@ -368,15 +374,17 @@ fn create_ln_node(
         oracles.insert(oracle.get_public_key(), Arc::clone(&oracle));
     }
 
-    let dlc_manager = Manager::new(
-        bitcoind_client.clone(),
-        bitcoind_client.clone(),
-        storage.clone(),
-        oracles,
-        Arc::new(mock_time::MockTime {}),
-        bitcoind_client.clone(),
-    )
-    .unwrap();
+    let dlc_manager = Arc::new(
+        Manager::new(
+            bitcoind_client.clone(),
+            bitcoind_client.clone(),
+            storage.clone(),
+            oracles,
+            Arc::new(mock_time::MockTime {}),
+            bitcoind_client.clone(),
+        )
+        .unwrap(),
+    );
 
     let sub_channel_manager = SubChannelManager::new(
         Secp256k1::new(),
@@ -384,7 +392,7 @@ fn create_ln_node(
         channel_manager.clone(),
         storage,
         bitcoind_client.clone(),
-        Box::new(dlc_manager),
+        dlc_manager.clone(),
     );
 
     LnDlcParty {
@@ -397,6 +405,7 @@ fn create_ln_node(
         network_graph,
         chain_height,
         sub_channel_manager,
+        dlc_manager,
     }
 }
 
@@ -445,10 +454,6 @@ fn ln_dlc_test() {
     bob_node.peer_manager.process_events();
     alice_node.peer_manager.process_events();
     bob_node.peer_manager.process_events();
-
-    println!("{:?}", alice_node.peer_manager.get_peer_node_ids());
-    println!("{:?}", bob_node.peer_manager.get_peer_node_ids());
-    println!("{}", bob_node.channel_manager.get_our_node_id());
 
     alice_node
         .channel_manager
@@ -546,10 +551,6 @@ fn ln_dlc_test() {
 
     let channel_id = bob_channel_details.channel_id;
 
-    println!("{}", alice_channel_details.balance_msat);
-    println!("{}", bob_channel_details.balance_msat);
-    println!("{:?}", bob_channel_details);
-
     let oracle_announcements = test_params
         .oracles
         .iter()
@@ -569,7 +570,7 @@ fn ln_dlc_test() {
     bob_node
         .sub_channel_manager
         .on_sub_channel_message(
-            &SubChannelMessage::Request(offer),
+            &SubChannelMessage::Request(offer.clone()),
             &alice_node.channel_manager.get_our_node_id(),
         )
         .unwrap();
@@ -625,10 +626,36 @@ fn ln_dlc_test() {
         .send_spontaneous_payment(&route, Some(payment_preimage))
         .unwrap();
 
+    let (renew_offer, _) = bob_node
+        .dlc_manager
+        .renew_offer(
+            &offer.channel_id,
+            test_params.contract_input.accept_collateral,
+            &test_params.contract_input,
+        )
+        .unwrap();
+
+    alice_node
+        .dlc_manager
+        .on_dlc_message(
+            &Message::RenewOffer(renew_offer),
+            bob_node.channel_manager.get_our_node_id(),
+        )
+        .unwrap();
+
     mocks::mock_time::set_time((test_params.contract_input.maturity_time as u64) + 1);
 
     alice_node
         .sub_channel_manager
-        .force_close_sub_channels(&channel_id)
+        .initiate_force_close_sub_channels(&channel_id)
+        .unwrap();
+
+    sink_rpc
+        .generate_to_address(500, &sink_address)
+        .expect("RPC Error");
+
+    alice_node
+        .sub_channel_manager
+        .finalize_force_close_sub_channels(&channel_id)
         .unwrap();
 }

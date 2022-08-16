@@ -306,7 +306,7 @@ impl ExtraSign for CustomSigner {
     ) -> Option<bitcoin::Transaction> {
         let mut commitment_tx = commitment_tx;
         if let Some(custom_script) = &*self.custom_script.lock().unwrap() {
-            dlc::channel::satisfy_buffer_descriptor(
+            dlc::channel::sub_channel::satisfy_split_descriptor(
                 &mut commitment_tx,
                 &custom_script.info.offer_revoke_params,
                 &custom_script.info.accept_revoke_params,
@@ -317,6 +317,7 @@ impl ExtraSign for CustomSigner {
                     compressed: true,
                 },
                 counter_signature,
+                crate::manager::CET_NSEQUENCE,
             )
             .unwrap();
             Some(commitment_tx)

@@ -7,7 +7,7 @@ use dlc_manager::channel::{
 use dlc_manager::contract::{
     offered_contract::OfferedContract, signed_contract::SignedContract, Contract,
 };
-use dlc_manager::sub_channel_manager::{SubChannel, SubChannelStorage};
+use dlc_manager::sub_channel_manager::SubChannel;
 use dlc_manager::Storage;
 use dlc_manager::{error::Error as DaemonError, ChannelId, ContractId};
 use std::collections::HashMap;
@@ -236,9 +236,7 @@ impl Storage for MemoryStorage {
     fn get_chain_monitor(&self) -> Result<Option<ChainMonitor>, DaemonError> {
         Ok(None)
     }
-}
 
-impl SubChannelStorage for MemoryStorage {
     fn upsert_sub_channel(&self, subchannel: &SubChannel) -> Result<(), DaemonError> {
         let mut map = self.sub_channels.write().expect("Could not get write lock");
         map.insert(subchannel.get_id(), subchannel.clone());

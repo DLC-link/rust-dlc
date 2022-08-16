@@ -449,6 +449,7 @@ impl BroadcasterInterface for BitcoinCoreProvider {
             let _ = write!(&mut serialized, "{:02x}", x).unwrap();
         }
         println!("{}", serialized);
+        println!("{:?}", tx.input[0].witness);
         self.send_transaction(tx).expect("Not to error.");
     }
 }

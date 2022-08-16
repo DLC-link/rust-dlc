@@ -28,8 +28,10 @@ macro_rules! get_object_in_state {
                 if let Some(p) = $peer_id as Option<PublicKey> {
                     if c.get_counter_party_id() != p {
                         return Err(Error::InvalidParameters(format!(
-                            "Peer {:02x?} is not involved with contract {:02x?}.",
-                            $peer_id, $id
+                            "Peer {:02x?} is not involved with {} {:02x?}.",
+                            $peer_id,
+                            stringify!($object_type),
+                            $id
                         )));
                     }
                 }

@@ -2,7 +2,11 @@
 
 use std::collections::HashMap;
 
-use crate::{signatures_to_secret, util::get_sig_hash_msg, DlcTransactions, PartyParams, Payout};
+use crate::{
+    signatures_to_secret,
+    util::{get_sig_hash_msg, DISABLE_LOCKTIME},
+    DlcTransactions, PartyParams, Payout,
+};
 
 use super::Error;
 use bitcoin::{
@@ -271,6 +275,7 @@ pub fn create_channel_transactions(
         cet_lock_time,
         cet_nsequence,
         None,
+        None,
     )
 }
 
@@ -289,6 +294,7 @@ pub fn create_renewal_channel_transactions(
     cet_lock_time: u32,
     cet_nsequence: u32,
     fund_vout: Option<usize>,
+    buffer_nsequence: Option<u32>,
 ) -> Result<DlcChannelTransactions, Error> {
     let extra_fee =
         super::util::weight_to_fee(BUFFER_TX_WEIGHT + CET_EXTRA_WEIGHT, fee_rate_per_vb);
@@ -313,7 +319,7 @@ pub fn create_renewal_channel_transactions(
 
     let tx_in = TxIn {
         previous_output: outpoint,
-        sequence: super::util::get_sequence(cet_lock_time),
+        sequence: buffer_nsequence.unwrap_or(DISABLE_LOCKTIME),
         script_sig: Script::default(),
         witness: Witness::default(),
     };

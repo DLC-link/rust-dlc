@@ -33,11 +33,11 @@ pub mod channel_updater;
 pub mod contract;
 pub mod contract_updater;
 mod conversion_utils;
+pub mod custom_signer;
 pub mod error;
 pub mod manager;
 pub mod payout_curve;
 pub mod sub_channel_manager;
-pub mod custom_signer;
 
 use bitcoin::{Address, Block, OutPoint, Script, Transaction, TxOut, Txid};
 use chain_monitor::ChainMonitor;
@@ -49,6 +49,7 @@ use dlc_messages::oracle_msgs::{OracleAnnouncement, OracleAttestation};
 use error::Error;
 use secp256k1_zkp::XOnlyPublicKey;
 use secp256k1_zkp::{PublicKey, SecretKey};
+use sub_channel_manager::SubChannel;
 
 /// Type alias for a contract id.
 pub type ContractId = [u8; 32];
@@ -160,6 +161,10 @@ pub trait Storage {
     fn persist_chain_monitor(&self, monitor: &ChainMonitor) -> Result<(), Error>;
     /// Returns the latest [`ChainMonitor`] in the store if any.
     fn get_chain_monitor(&self) -> Result<Option<ChainMonitor>, Error>;
+    ///
+    fn upsert_sub_channel(&self, subchannel: &SubChannel) -> Result<(), Error>;
+    ///
+    fn get_sub_channel(&self, channel_id: ChannelId) -> Result<Option<SubChannel>, Error>;
 }
 
 /// Oracle trait provides access to oracle information.

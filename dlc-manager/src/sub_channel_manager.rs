@@ -3,7 +3,7 @@
 //!
 use std::ops::Deref;
 
-use bitcoin::{OutPoint, Script, Transaction};
+use bitcoin::{OutPoint, Script};
 use dlc::{
     channel::{get_tx_adaptor_signature, sub_channel::SplitTx, RevokeParams},
     PartyParams, Payout,
@@ -36,10 +36,7 @@ use secp256k1_zkp::{
 
 use crate::{
     channel::Channel,
-    channel::{
-        offered_channel::OfferedChannel, party_points::PartyBasePoints,
-        signed_channel::SignedChannel,
-    },
+    channel::{offered_channel::OfferedChannel, party_points::PartyBasePoints},
     channel_updater,
     contract::{contract_input::ContractInput, Contract},
     custom_signer::{CustomScriptSignInfo, CustomSigner},
@@ -50,6 +47,8 @@ use crate::{
 
 const INITIAL_SPLIT_NUMBER: u64 = (1 << 48) - 1;
 
+#[macro_export]
+///
 macro_rules! get_sub_channel_in_state {
     ($manager: ident, $channel_id: expr, $state: ident, $peer_id: expr) => {{
         get_object_in_state!(
@@ -72,14 +71,18 @@ pub enum SubChannel {
     Accepted(AcceptedSubChannel),
     ///
     Signed(SignedSubChannel),
+    ///
+    Closing(ClosingSubChannel),
 }
 
 impl SubChannel {
-    fn get_counter_party_id(&self) -> PublicKey {
+    ///
+    pub fn get_counter_party_id(&self) -> PublicKey {
         match self {
             SubChannel::Offered(o) => o.counter_party,
             SubChannel::Accepted(a) => a.counter_party,
             SubChannel::Signed(s) => s.counter_party,
+            SubChannel::Closing(s) => s.signed_sub_channel.counter_party,
         }
     }
 
@@ -89,16 +92,9 @@ impl SubChannel {
             SubChannel::Offered(o) => o.channel_id,
             SubChannel::Accepted(a) => a.channel_id,
             SubChannel::Signed(s) => s.channel_id,
+            SubChannel::Closing(c) => c.signed_sub_channel.channel_id,
         }
     }
-}
-
-///
-pub trait SubChannelStorage: Storage {
-    ///
-    fn upsert_sub_channel(&self, subchannel: &SubChannel) -> Result<(), Error>;
-    ///
-    fn get_sub_channel(&self, channel_id: ChannelId) -> Result<Option<SubChannel>, Error>;
 }
 
 ///
@@ -143,21 +139,6 @@ pub trait LNChannelManager<Signer: Sign> {
         channel_id: &[u8; 32],
         counter_party_node_id: &PublicKey,
     ) -> Result<(), Error>;
-}
-
-///
-pub trait DlcChannelManager {
-    ///
-    fn force_close_channel(&self, channel_id: &ChannelId) -> Result<(), Error>;
-
-    ///
-    fn initiate_unilateral_close_established_channel_internal<SF>(
-        &self,
-        signed_channel: SignedChannel,
-        sign_cb: &mut SF,
-    ) -> Result<(), Error>
-    where
-        SF: FnMut(&mut Transaction, &Signature);
 }
 
 impl<Signer: Sign, M: Deref, T: Deref, K: Deref, F: Deref, L: Deref> LNChannelManager<Signer>
@@ -242,32 +223,6 @@ where
     ) -> Result<(), Error> {
         self.force_close_channel(channel_id, counter_party_node_id)
             .map_err(|e| Error::InvalidParameters(format!("{:?}", e)))
-    }
-}
-
-impl<W: Deref, B: Deref, S: Deref, O: Deref, T: Deref, F: Deref> DlcChannelManager
-    for Manager<W, B, S, O, T, F>
-where
-    W::Target: Wallet,
-    B::Target: Blockchain,
-    S::Target: Storage,
-    O::Target: Oracle,
-    T::Target: Time,
-    F::Target: FeeEstimator,
-{
-    fn force_close_channel(&self, channel_id: &ChannelId) -> Result<(), Error> {
-        self.force_close_channel(channel_id)
-    }
-
-    fn initiate_unilateral_close_established_channel_internal<SF>(
-        &self,
-        signed_channel: SignedChannel,
-        sign_cb: &mut SF,
-    ) -> Result<(), Error>
-    where
-        SF: FnMut(&mut Transaction, &Signature),
-    {
-        self.initiate_unilateral_close_established_channel_internal(signed_channel, sign_cb)
     }
 }
 
@@ -396,6 +351,13 @@ impl_dlc_writeable!(SignedSubChannel, {
     (original_funding_redeemscript, writeable)
 });
 
+///
+#[derive(Debug, Clone)]
+pub struct ClosingSubChannel {
+    ///
+    pub signed_sub_channel: SignedSubChannel,
+}
+
 const DLC_CHANNEL_AND_SPLIT_MIN_WEIGHT: usize = dlc::channel::sub_channel::SPLIT_TX_WEIGHT
     + dlc::channel::BUFFER_TX_WEIGHT
     + dlc::channel::CET_EXTRA_WEIGHT
@@ -404,13 +366,23 @@ const DLC_CHANNEL_AND_SPLIT_MIN_WEIGHT: usize = dlc::channel::sub_channel::SPLIT
     + 18;
 
 ///
-pub struct SubChannelManager<W: Deref, M: Deref, S: Deref, B: Deref, D: Deref>
-where
+pub struct SubChannelManager<
+    W: Deref,
+    M: Deref,
+    S: Deref,
+    B: Deref,
+    O: Deref,
+    T: Deref,
+    F: Deref,
+    D: Deref<Target = Manager<W, B, S, O, T, F>>,
+> where
     W::Target: Wallet,
     M::Target: LNChannelManager<CustomSigner>,
-    S::Target: SubChannelStorage,
+    S::Target: Storage,
     B::Target: Blockchain,
-    D::Target: DlcChannelManager,
+    O::Target: Oracle,
+    T::Target: Time,
+    F::Target: FeeEstimator,
 {
     secp: Secp256k1<All>,
     wallet: W,
@@ -420,13 +392,24 @@ where
     dlc_channel_manager: D,
 }
 
-impl<W: Deref, M: Deref, S: Deref, B: Deref, D: Deref> SubChannelManager<W, M, S, B, D>
+impl<
+        W: Deref,
+        M: Deref,
+        S: Deref,
+        B: Deref,
+        O: Deref,
+        T: Deref,
+        F: Deref,
+        D: Deref<Target = Manager<W, B, S, O, T, F>>,
+    > SubChannelManager<W, M, S, B, O, T, F, D>
 where
     W::Target: Wallet,
     M::Target: LNChannelManager<CustomSigner>,
-    S::Target: SubChannelStorage,
+    S::Target: Storage,
     B::Target: Blockchain,
-    D::Target: DlcChannelManager,
+    O::Target: Oracle,
+    T::Target: Time,
+    F::Target: FeeEstimator,
 {
     ///
     pub fn new(
@@ -448,13 +431,24 @@ where
     }
 }
 
-impl<W: Deref, M: Deref, S: Deref, B: Deref, D: Deref> SubChannelManager<W, M, S, B, D>
+impl<
+        W: Deref,
+        M: Deref,
+        S: Deref,
+        B: Deref,
+        O: Deref,
+        T: Deref,
+        F: Deref,
+        D: Deref<Target = Manager<W, B, S, O, T, F>>,
+    > SubChannelManager<W, M, S, B, O, T, F, D>
 where
     W::Target: Wallet,
     M::Target: LNChannelManager<CustomSigner>,
-    S::Target: SubChannelStorage,
+    S::Target: Storage,
     B::Target: Blockchain,
-    D::Target: DlcChannelManager,
+    O::Target: Oracle,
+    T::Target: Time,
+    F::Target: FeeEstimator,
 {
     ///
     pub fn on_sub_channel_message(
@@ -511,15 +505,6 @@ where
             INITIAL_SPLIT_NUMBER,
         ))
         .expect("a valid secret key.");
-
-        // TODO(tibo): need to check values inbound/outbound to determine if request is correct,
-        // accounting for increased fees.
-        // if total_local != channel_details.balance_msat / 1000 {
-        //     return Err(Error::InvalidParameters(format!(
-        //         "Balance is {}, but requested to allocate {}, both need to match",
-        //         channel_details.balance_msat, total_local
-        //     )));
-        // }
 
         let next_per_split_point = PublicKey::from_secret_key(&self.secp, &per_split_secret);
         let per_split_seed_pk = PublicKey::from_secret_key(&self.secp, &per_split_seed);
@@ -693,6 +678,7 @@ where
                 vout: funding_txo.index as u32,
             },
             &output_values,
+            crate::manager::CET_NSEQUENCE,
         );
 
         let mut split_tx_adaptor_signature = None;
@@ -713,6 +699,8 @@ where
 
         let split_tx_adaptor_signature = split_tx_adaptor_signature.unwrap();
 
+        println!("OUTPUT SCRIPT {:?}", split_tx.output_script);
+
         let custom_script_info = Some(CustomScript {
             script: split_tx.output_script.clone(),
             info: CustomScriptSignInfo {
@@ -724,6 +712,7 @@ where
                 script_pubkey: split_tx.output_script.clone(),
                 channel_value_satoshis: ln_output_value,
             },
+            nsequence: crate::manager::CET_NSEQUENCE,
         });
 
         let commitment_signed = self
@@ -762,6 +751,7 @@ where
                 cet_lock_time,
                 cet_nsequence,
                 Some(1),
+                Some(crate::manager::CET_NSEQUENCE),
             )
         };
         let (mut accepted_channel, mut accepted_contract, accept_channel) =
@@ -828,9 +818,11 @@ where
     }
 
     ///
-    pub fn force_close_sub_channels(&mut self, channel_id: &ChannelId) -> Result<(), Error> {
-        let signed =
-            get_sub_channel_in_state!(self, *channel_id, Signed, None as Option<PublicKey>)?;
+    pub fn initiate_force_close_sub_channels(
+        &mut self,
+        channel_id: &ChannelId,
+    ) -> Result<(), Error> {
+        let signed = get_sub_channel_in_state!(self, *channel_id, Signed, None::<PublicKey>)?;
 
         let channel_details = self
             .ln_channel_manager
@@ -854,6 +846,7 @@ where
 
         let mut split_tx = signed.split_tx.transaction.clone();
 
+        //TODO(tibo): remove
         dlc::verify_tx_input_sig(
             &self.secp,
             &counter_split_signature,
@@ -906,97 +899,30 @@ where
 
         self.blockchain.send_transaction(&split_tx)?;
 
-        let signed_channel =
-            get_channel_in_state!(self, channel_id, Signed, None as Option<PublicKey>)?;
-
-        let own_base_secret_key = self
-            .wallet
-            .get_secret_key_for_pubkey(&signed.own_points.own_basepoint)?;
-        let own_secret_key = derive_private_key(
-            &self.secp,
-            &signed.own_per_split_point,
-            &own_base_secret_key,
-        )
-        .expect("to get a valid secret.");
-
-        let (own_pk, counter_pk, offer_params, accept_params) = {
-            let own_revoke_params = signed.own_points.get_revokable_params(
-                &self.secp,
-                &signed.counter_points.revocation_basepoint,
-                &signed.own_per_split_point,
-            )?;
-            let counter_revoke_params = signed.counter_points.get_revokable_params(
-                &self.secp,
-                &signed.own_points.revocation_basepoint,
-                &signed.counter_per_split_point,
-            )?;
-            if signed.is_offer {
-                (
-                    own_revoke_params.own_pk.clone(),
-                    counter_revoke_params.own_pk.clone(),
-                    own_revoke_params,
-                    counter_revoke_params,
-                )
-            } else {
-                (
-                    own_revoke_params.own_pk.clone(),
-                    counter_revoke_params.own_pk.clone(),
-                    counter_revoke_params,
-                    own_revoke_params,
-                )
-            }
+        let closing_sub_channel = ClosingSubChannel {
+            signed_sub_channel: signed,
         };
 
-        let mut sign_cb = |tx: &mut Transaction, counter_signature: &Signature| {
-            let sig = dlc::util::get_raw_sig_for_tx_input(
-                &self.secp,
-                tx,
-                0,
-                &signed.split_tx.output_script,
-                split_tx.output[1].value,
-                &own_secret_key,
-            )
-            .unwrap();
+        self.store
+            .upsert_sub_channel(&SubChannel::Closing(closing_sub_channel))?;
 
-            dlc::verify_tx_input_sig(
-                &self.secp,
-                &sig,
-                &tx,
-                0,
-                &signed.split_tx.output_script,
-                split_tx.output[1].value,
-                &PublicKey::from_secret_key(&self.secp, &own_secret_key),
-            )
-            .unwrap();
+        Ok(())
+    }
 
-            dlc::verify_tx_input_sig(
-                &self.secp,
-                &counter_signature,
-                &tx,
-                0,
-                &signed.split_tx.output_script,
-                split_tx.output[1].value,
-                &counter_pk.inner,
-            )
-            .unwrap();
-
-            dlc::channel::satisfy_buffer_descriptor(
-                tx,
-                &offer_params,
-                &accept_params,
-                &own_pk.inner,
-                &sig,
-                &counter_pk,
-                counter_signature,
-            )
-            .unwrap();
-        };
-
+    ///
+    pub fn finalize_force_close_sub_channels(
+        &mut self,
+        channel_id: &ChannelId,
+    ) -> Result<(), Error> {
+        let closing = get_sub_channel_in_state!(self, *channel_id, Closing, None::<PublicKey>)?;
+        let counter_party = closing.signed_sub_channel.counter_party;
+        println!("ahja");
         self.dlc_channel_manager
-            .initiate_unilateral_close_established_channel_internal(signed_channel, &mut sign_cb)?;
+            .force_close_sub_channel(channel_id, closing)?;
+        println!("asdf");
 
         self.ln_channel_manager
-            .force_close_channel(channel_id, &signed.counter_party)?;
+            .force_close_channel(channel_id, &counter_party)?;
 
         Ok(())
     }
@@ -1170,6 +1096,7 @@ where
             &accept_revoke_params,
             &funding_outpoint,
             &output_values,
+            crate::manager::CET_NSEQUENCE,
         );
 
         dlc::channel::verify_tx_adaptor_signature(
@@ -1211,6 +1138,8 @@ where
         )
         .expect("to get a valid secret.");
 
+        println!("OUTPUT SCRIPT {:?}", split_tx.output_script);
+
         let custom_script_info = Some(CustomScript {
             script: split_tx.output_script.clone(),
             info: CustomScriptSignInfo {
@@ -1222,6 +1151,7 @@ where
                 script_pubkey: split_tx.output_script.clone(),
                 channel_value_satoshis: ln_output_value,
             },
+            nsequence: crate::manager::CET_NSEQUENCE,
         });
 
         let commitment_signed = self
@@ -1287,6 +1217,7 @@ where
                 cet_lock_time,
                 cet_nsequence,
                 Some(1),
+                Some(crate::manager::CET_NSEQUENCE),
             )
         };
 
