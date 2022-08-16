@@ -2024,7 +2024,7 @@ where
 
         println!("NSEQUENCE: {}", buffer_transaction.input[0].sequence);
 
-        dlc::channel::sub_channel::satisfy_split_descriptor(
+        dlc::channel::satisfy_buffer_descriptor(
             &mut buffer_transaction,
             &offer_params,
             &accept_params,
@@ -2032,7 +2032,6 @@ where
             &sig,
             &counter_pk,
             &counter_buffer_signature,
-            crate::manager::CET_NSEQUENCE,
         )?;
         println!("c");
     } else {

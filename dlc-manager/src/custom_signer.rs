@@ -2,47 +2,21 @@
 use std::sync::{Arc, Mutex};
 
 use bitcoin::Script;
-use dlc::channel::RevokeParams;
 use lightning::{
     chain::keysinterface::{
         BaseSign, ExtraSign, InMemorySigner, KeyMaterial, KeysInterface, KeysManager, Recipient,
         Sign,
     },
-    ln::{
-        chan_utils::{ChannelPublicKeys, CustomScript},
-        msgs::DecodeError,
-        script::ShutdownScript,
-    },
+    ln::{chan_utils::ChannelPublicKeys, msgs::DecodeError, script::ShutdownScript},
     util::ser::Writeable,
 };
-use secp256k1_zkp::{ecdsa::RecoverableSignature, All, PublicKey, SecretKey};
-
-///
-#[derive(Clone)]
-pub struct CustomScriptSignInfo {
-    ///
-    pub offer_revoke_params: RevokeParams,
-    ///
-    pub accept_revoke_params: RevokeParams,
-    ///
-    pub own_seckey: SecretKey,
-    ///
-    pub own_public_key: PublicKey,
-    ///
-    pub counter_public_key: PublicKey,
-    ///
-    pub script_pubkey: Script,
-    ///
-    pub channel_value_satoshis: u64,
-}
+use secp256k1_zkp::{ecdsa::RecoverableSignature, SecretKey};
 
 ///
 pub struct CustomSigner {
     in_memory_signer: Arc<Mutex<InMemorySigner>>,
-    // TODO(tibo): this is not safe.
+    // TODO(tibo): this might not be safe.
     channel_public_keys: ChannelPublicKeys,
-
-    custom_script: Arc<Mutex<Option<CustomScript<CustomScriptSignInfo>>>>,
 }
 
 impl CustomSigner {
@@ -51,7 +25,6 @@ impl CustomSigner {
         Self {
             channel_public_keys: in_memory_signer.pubkeys().clone(),
             in_memory_signer: Arc::new(Mutex::new(in_memory_signer)),
-            custom_script: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -61,7 +34,6 @@ impl Clone for CustomSigner {
         Self {
             in_memory_signer: self.in_memory_signer.clone(),
             channel_public_keys: self.channel_public_keys.clone(),
-            custom_script: self.custom_script.clone(),
         }
     }
 }
@@ -116,26 +88,10 @@ impl BaseSign for CustomSigner {
         ),
         (),
     > {
-        let (mut commit_sig, htlc_sigs) = self
-            .in_memory_signer
+        self.in_memory_signer
             .lock()
             .unwrap()
-            .sign_counterparty_commitment(commitment_tx, preimages, secp_ctx)?;
-        if let Some(custom_script) = &*self.custom_script.lock().unwrap() {
-            let trusted_tx = commitment_tx.trust();
-            let tx = &trusted_tx.built_transaction().transaction;
-            commit_sig = dlc::util::get_raw_sig_for_tx_input(
-                secp_ctx,
-                tx,
-                0,
-                &custom_script.info.script_pubkey,
-                custom_script.info.channel_value_satoshis,
-                &custom_script.info.own_seckey,
-            )
-            .unwrap();
-        }
-
-        Ok((commit_sig, htlc_sigs))
+            .sign_counterparty_commitment(commitment_tx, preimages, secp_ctx)
     }
 
     fn validate_counterparty_revocation(
@@ -160,26 +116,10 @@ impl BaseSign for CustomSigner {
         ),
         (),
     > {
-        let (mut commit_sig, htlc_sigs) = self
-            .in_memory_signer
+        self.in_memory_signer
             .lock()
             .unwrap()
-            .sign_holder_commitment_and_htlcs(commitment_tx, secp_ctx)?;
-        if let Some(custom_script) = &*self.custom_script.lock().unwrap() {
-            let trusted_tx = commitment_tx.trust();
-            let tx = &trusted_tx.built_transaction().transaction;
-            commit_sig = dlc::util::get_raw_sig_for_tx_input(
-                secp_ctx,
-                tx,
-                0,
-                &custom_script.info.script_pubkey,
-                custom_script.info.channel_value_satoshis,
-                &custom_script.info.own_seckey,
-            )
-            .unwrap();
-        }
-
-        Ok((commit_sig, htlc_sigs))
+            .sign_holder_commitment_and_htlcs(commitment_tx, secp_ctx)
     }
 
     fn sign_justice_revoked_output(
@@ -296,68 +236,6 @@ impl ExtraSign for CustomSigner {
             .unwrap()
             .set_channel_value_satoshis(value)
     }
-
-    fn try_add_sigs(
-        &self,
-        commitment_tx: bitcoin::Transaction,
-        funding_redeem_script: &Script,
-        own_signature: &secp256k1_zkp::ecdsa::Signature,
-        counter_signature: &secp256k1_zkp::ecdsa::Signature,
-    ) -> Option<bitcoin::Transaction> {
-        let mut commitment_tx = commitment_tx;
-        if let Some(custom_script) = &*self.custom_script.lock().unwrap() {
-            dlc::channel::sub_channel::satisfy_split_descriptor(
-                &mut commitment_tx,
-                &custom_script.info.offer_revoke_params,
-                &custom_script.info.accept_revoke_params,
-                &custom_script.info.own_public_key,
-                own_signature,
-                &bitcoin::PublicKey {
-                    inner: custom_script.info.counter_public_key,
-                    compressed: true,
-                },
-                counter_signature,
-                crate::manager::CET_NSEQUENCE,
-            )
-            .unwrap();
-            Some(commitment_tx)
-        } else {
-            None
-        }
-    }
-
-    fn set_custom_script_info(
-        &mut self,
-        custom_script_info: Option<CustomScript<Self::ScriptInfo>>,
-    ) {
-        *self.custom_script.lock().unwrap() = custom_script_info;
-    }
-
-    fn try_verify_commitment_signature(
-        &self,
-        commitment_tx: &bitcoin::Transaction,
-        signature: &secp256k1_zkp::ecdsa::Signature,
-        secp_ctx: &secp256k1_zkp::Secp256k1<All>,
-    ) -> Option<Result<(), ()>> {
-        if let Some(custom_script) = &*self.custom_script.lock().unwrap() {
-            Some(
-                dlc::verify_tx_input_sig(
-                    secp_ctx,
-                    signature,
-                    commitment_tx,
-                    0,
-                    &custom_script.script,
-                    custom_script.info.channel_value_satoshis,
-                    &custom_script.info.counter_public_key,
-                )
-                .map_err(|_| ()),
-            )
-        } else {
-            None
-        }
-    }
-
-    type ScriptInfo = CustomScriptSignInfo;
 }
 
 impl Writeable for CustomSigner {

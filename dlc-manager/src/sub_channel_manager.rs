@@ -3,9 +3,13 @@
 //!
 use std::ops::Deref;
 
-use bitcoin::{OutPoint, Script};
+use bitcoin::{OutPoint, Script, Transaction};
 use dlc::{
-    channel::{get_tx_adaptor_signature, sub_channel::SplitTx, RevokeParams},
+    channel::{
+        get_tx_adaptor_signature,
+        sub_channel::{SplitTx, LN_GLUE_TX_WEIGHT},
+        RevokeParams,
+    },
     PartyParams, Payout,
 };
 use dlc_messages::{
@@ -23,7 +27,7 @@ use lightning::{
         keysinterface::{KeysInterface, Sign},
     },
     ln::{
-        chan_utils::{build_commitment_secret, derive_private_key, CustomScript},
+        chan_utils::{build_commitment_secret, derive_private_key},
         channelmanager::{ChannelDetails, ChannelManager},
         msgs::{CommitmentSigned, DecodeError, RevokeAndACK},
     },
@@ -39,7 +43,7 @@ use crate::{
     channel::{offered_channel::OfferedChannel, party_points::PartyBasePoints},
     channel_updater,
     contract::{contract_input::ContractInput, Contract},
-    custom_signer::{CustomScriptSignInfo, CustomSigner},
+    custom_signer::CustomSigner,
     error::Error,
     manager::{get_channel_in_state, get_contract_in_state, Manager},
     Blockchain, ChannelId, Oracle, Signer, Storage, Time, Wallet,
@@ -109,7 +113,6 @@ pub trait LNChannelManager<Signer: Sign> {
         funding_outpoint: &OutPoint,
         channel_value_satoshis: u64,
         value_to_self_msat: u64,
-        custom_script_info: Option<CustomScript<Signer::ScriptInfo>>,
     ) -> Result<CommitmentSigned, Error>;
     ///
     fn on_commitment_signed_get_raa(
@@ -165,7 +168,6 @@ where
         funding_outpoint: &OutPoint,
         channel_value_satoshis: u64,
         value_to_self_msat: u64,
-        custom_script_info: Option<CustomScript<Signer::ScriptInfo>>,
     ) -> Result<CommitmentSigned, Error> {
         self.get_updated_funding_outpoint_commitment_signed(
             channel_id,
@@ -176,7 +178,6 @@ where
             },
             channel_value_satoshis,
             value_to_self_msat,
-            custom_script_info,
         )
         .map_err(|e| Error::InvalidParameters(format!("{:?}", e)))
     }
@@ -284,6 +285,8 @@ pub struct AcceptedSubChannel {
     pub fund_value_satoshis: u64,
     ///
     pub original_funding_redeemscript: Script,
+    ///
+    pub ln_glue_transaction: Transaction,
 }
 
 impl_dlc_writeable_external!(SplitTx, split_tx, {(transaction, writeable), (output_script, writeable)});
@@ -300,7 +303,8 @@ impl_dlc_writeable!(AcceptedSubChannel, {
     (split_tx, {cb_writeable, split_tx::write, split_tx::read}),
     (is_offer, writeable),
     (fund_value_satoshis, writeable),
-    (original_funding_redeemscript, writeable)
+    (original_funding_redeemscript, writeable),
+    (ln_glue_transaction, writeable)
 });
 
 #[derive(Debug, Clone)]
@@ -333,6 +337,10 @@ pub struct SignedSubChannel {
     pub fund_value_satoshis: u64,
     ///
     pub original_funding_redeemscript: Script,
+    ///
+    pub ln_glue_transaction: Transaction,
+    ///
+    pub counter_glue_signature: Signature,
 }
 
 impl_dlc_writeable!(SignedSubChannel, {
@@ -348,7 +356,9 @@ impl_dlc_writeable!(SignedSubChannel, {
     (split_tx, {cb_writeable, split_tx::write, split_tx::read}),
     (is_offer, writeable),
     (fund_value_satoshis, writeable),
-    (original_funding_redeemscript, writeable)
+    (original_funding_redeemscript, writeable),
+    (ln_glue_transaction, writeable),
+    (counter_glue_signature, writeable)
 });
 
 ///
@@ -612,6 +622,11 @@ where
             offered_contract.fee_rate_per_vb,
         )?;
 
+        println!(
+            "VALUE TO OWN: {}, VALUE TO COUNTER: {}",
+            own_to_self_msat, counter_to_self_msat
+        );
+
         let funding_redeemscript = channel_details.funding_redeemscript.clone();
 
         let funding_txo = channel_details
@@ -655,7 +670,8 @@ where
 
         let ln_output_value = channel_details.channel_value_satoshis
             - dlc_output_value
-            - dlc::channel::sub_channel::SPLIT_TX_WEIGHT as u64 * offered_contract.fee_rate_per_vb;
+            - (dlc::channel::sub_channel::SPLIT_TX_WEIGHT) as u64
+                * offered_contract.fee_rate_per_vb;
 
         // TODO(tibo): remove or fix this assert to work with msat properly (div instead of mul)
         assert_eq!(
@@ -666,9 +682,12 @@ where
                 + channel_details.counterparty.unspendable_punishment_reserve * 1000
                 - own_to_self_msat
                 - counter_to_self_msat
+                - (LN_GLUE_TX_WEIGHT as u64 * offered_contract.fee_rate_per_vb) * 1000
         );
 
         let output_values = [ln_output_value, dlc_output_value];
+
+        println!("OUTPUT VALUES: {:?}", output_values);
 
         let split_tx = dlc::channel::sub_channel::create_split_tx(
             &offer_revoke_params,
@@ -678,7 +697,6 @@ where
                 vout: funding_txo.index as u32,
             },
             &output_values,
-            crate::manager::CET_NSEQUENCE,
         );
 
         let mut split_tx_adaptor_signature = None;
@@ -701,19 +719,18 @@ where
 
         println!("OUTPUT SCRIPT {:?}", split_tx.output_script);
 
-        let custom_script_info = Some(CustomScript {
-            script: split_tx.output_script.clone(),
-            info: CustomScriptSignInfo {
-                offer_revoke_params: offer_revoke_params.clone(),
-                accept_revoke_params: accept_revoke_params.clone(),
-                own_seckey: own_secret_key.clone(),
-                own_public_key: PublicKey::from_secret_key(&self.secp, &own_secret_key),
-                counter_public_key: offer_revoke_params.own_pk.inner,
-                script_pubkey: split_tx.output_script.clone(),
-                channel_value_satoshis: ln_output_value,
+        let glue_tx_output_value =
+            ln_output_value - (LN_GLUE_TX_WEIGHT as u64 * offered_contract.fee_rate_per_vb);
+
+        let ln_glue_tx = dlc::channel::sub_channel::create_ln_glue_tx(
+            &OutPoint {
+                txid: split_tx.transaction.txid(),
+                vout: 0,
             },
-            nsequence: crate::manager::CET_NSEQUENCE,
-        });
+            &channel_details.funding_redeemscript,
+            crate::manager::CET_NSEQUENCE,
+            glue_tx_output_value,
+        );
 
         let commitment_signed = self
             .ln_channel_manager
@@ -721,12 +738,11 @@ where
                 channel_id,
                 &offered_sub_channel.counter_party,
                 &OutPoint {
-                    txid: split_tx.transaction.txid(),
+                    txid: ln_glue_tx.txid(),
                     vout: 0,
                 },
-                split_tx.transaction.output[0].value,
+                glue_tx_output_value,
                 own_to_self_msat,
-                custom_script_info,
             )?;
 
         let tx_create = |offer_params: &PartyParams,
@@ -766,10 +782,18 @@ where
                 Some(own_secret_key),
             )?;
 
+        let ln_glue_signature = dlc::util::get_raw_sig_for_tx_input(
+            &self.secp,
+            &ln_glue_tx,
+            0,
+            &split_tx.output_script,
+            ln_output_value,
+            &own_secret_key,
+        )?;
+
         // TODO(tibo): refactor properly.
         accepted_contract.accept_params.inputs = Vec::new();
         accepted_contract.funding_inputs = Vec::new();
-
         accepted_channel.channel_id = offered_sub_channel.channel_id;
 
         let msg = SubChannelAccept {
@@ -790,6 +814,7 @@ where
             first_per_update_point: accept_channel.first_per_update_point,
             payout_spk: accept_channel.payout_spk,
             payout_serial_id: accept_channel.payout_serial_id,
+            ln_glue_signature,
         };
 
         let accepted_sub_channel = AcceptedSubChannel {
@@ -805,6 +830,7 @@ where
             is_offer: false,
             fund_value_satoshis,
             original_funding_redeemscript: funding_redeemscript,
+            ln_glue_transaction: ln_glue_tx,
         };
 
         self.store
@@ -915,11 +941,61 @@ where
         channel_id: &ChannelId,
     ) -> Result<(), Error> {
         let closing = get_sub_channel_in_state!(self, *channel_id, Closing, None::<PublicKey>)?;
+        let signed_sub_channel = &closing.signed_sub_channel;
         let counter_party = closing.signed_sub_channel.counter_party;
-        println!("ahja");
+        let mut glue_tx = closing.signed_sub_channel.ln_glue_transaction.clone();
+
+        let own_revoke_params = signed_sub_channel.own_points.get_revokable_params(
+            &self.secp,
+            &signed_sub_channel.counter_points.revocation_basepoint,
+            &signed_sub_channel.own_per_split_point,
+        )?;
+
+        let counter_revoke_params = signed_sub_channel.counter_points.get_revokable_params(
+            &self.secp,
+            &signed_sub_channel.own_points.revocation_basepoint,
+            &signed_sub_channel.counter_per_split_point,
+        )?;
+
+        let (offer_params, accept_params) = if signed_sub_channel.is_offer {
+            (&own_revoke_params, &counter_revoke_params)
+        } else {
+            (&counter_revoke_params, &own_revoke_params)
+        };
+
+        let own_base_secret_key = self
+            .wallet
+            .get_secret_key_for_pubkey(&signed_sub_channel.own_points.own_basepoint)?;
+        let own_secret_key = derive_private_key(
+            &self.secp,
+            &signed_sub_channel.own_per_split_point,
+            &own_base_secret_key,
+        )
+        .expect("to be able to derive own secret.");
+
+        let own_signature = dlc::util::get_raw_sig_for_tx_input(
+            &self.secp,
+            &glue_tx,
+            0,
+            &signed_sub_channel.split_tx.output_script,
+            signed_sub_channel.split_tx.transaction.output[0].value,
+            &own_secret_key,
+        )?;
+
+        dlc::channel::satisfy_buffer_descriptor(
+            &mut glue_tx,
+            offer_params,
+            accept_params,
+            &own_revoke_params.own_pk.inner,
+            &own_signature,
+            &counter_revoke_params.own_pk,
+            &signed_sub_channel.counter_glue_signature,
+        )?;
+
         self.dlc_channel_manager
             .force_close_sub_channel(channel_id, closing)?;
-        println!("asdf");
+
+        self.blockchain.send_transaction(&glue_tx)?;
 
         self.ln_channel_manager
             .force_close_channel(channel_id, &counter_party)?;
@@ -1064,12 +1140,17 @@ where
             None as Option<PublicKey>
         )?;
 
-        let (own_to_self_value_msat, _) = validate_and_get_ln_values_per_party(
+        let (own_to_self_value_msat, counter_to_self_msat) = validate_and_get_ln_values_per_party(
             &channel_details,
             offered_contract.total_collateral - offered_contract.offer_params.collateral,
             offered_contract.offer_params.collateral,
             offered_contract.fee_rate_per_vb,
         )?;
+
+        println!(
+            "VALUE TO OWN: {}, VALUE TO COUNTER: {}",
+            own_to_self_value_msat, counter_to_self_msat
+        );
 
         let dlc_output_value = offered_contract.total_collateral
             + (dlc::channel::BUFFER_TX_WEIGHT
@@ -1091,12 +1172,13 @@ where
 
         let output_values = [ln_output_value, dlc_output_value];
 
+        println!("OUTPUT VALUES: {:?}", output_values);
+
         let split_tx = dlc::channel::sub_channel::create_split_tx(
             &offer_revoke_params,
             &accept_revoke_params,
             &funding_outpoint,
             &output_values,
-            crate::manager::CET_NSEQUENCE,
         );
 
         dlc::channel::verify_tx_adaptor_signature(
@@ -1140,19 +1222,18 @@ where
 
         println!("OUTPUT SCRIPT {:?}", split_tx.output_script);
 
-        let custom_script_info = Some(CustomScript {
-            script: split_tx.output_script.clone(),
-            info: CustomScriptSignInfo {
-                offer_revoke_params: offer_revoke_params.clone(),
-                accept_revoke_params: accept_revoke_params.clone(),
-                own_seckey: own_secret_key.clone(),
-                own_public_key: PublicKey::from_secret_key(&self.secp, &own_secret_key),
-                counter_public_key: accept_revoke_params.own_pk.inner,
-                script_pubkey: split_tx.output_script.clone(),
-                channel_value_satoshis: ln_output_value,
+        let glue_tx_output_value =
+            ln_output_value - (LN_GLUE_TX_WEIGHT as u64 * offered_contract.fee_rate_per_vb);
+
+        let ln_glue_tx = dlc::channel::sub_channel::create_ln_glue_tx(
+            &OutPoint {
+                txid: split_tx.transaction.txid(),
+                vout: 0,
             },
-            nsequence: crate::manager::CET_NSEQUENCE,
-        });
+            &channel_details.funding_redeemscript,
+            crate::manager::CET_NSEQUENCE,
+            glue_tx_output_value,
+        );
 
         let commitment_signed = self
             .ln_channel_manager
@@ -1160,12 +1241,11 @@ where
                 &sub_channel_accept.channel_id,
                 counter_party,
                 &OutPoint {
-                    txid: split_tx.transaction.txid(),
+                    txid: ln_glue_tx.txid(),
                     vout: 0,
                 },
-                split_tx.transaction.output[0].value,
+                glue_tx_output_value,
                 own_to_self_value_msat,
-                custom_script_info,
             )?;
 
         let revoke_and_ack = self.ln_channel_manager.on_commitment_signed_get_raa(
@@ -1240,6 +1320,25 @@ where
         // TODO(tibo): consider having separate ids.
         signed_channel.channel_id = sub_channel_accept.channel_id;
 
+        dlc::verify_tx_input_sig(
+            &self.secp,
+            &sub_channel_accept.ln_glue_signature,
+            &ln_glue_tx,
+            0,
+            &split_tx.output_script,
+            ln_output_value,
+            &accept_revoke_params.own_pk.inner,
+        )?;
+
+        let ln_glue_signature = dlc::util::get_raw_sig_for_tx_input(
+            &self.secp,
+            &ln_glue_tx,
+            0,
+            &split_tx.output_script,
+            ln_output_value,
+            &own_secret_key,
+        )?;
+
         let msg = SubChannelConfirm {
             channel_id: sub_channel_accept.channel_id,
             per_split_secret: SecretKey::from_slice(&revoke_and_ack.per_commitment_secret)
@@ -1251,6 +1350,7 @@ where
             cet_adaptor_signatures: sign_channel.cet_adaptor_signatures,
             buffer_adaptor_signature: sign_channel.buffer_adaptor_signature,
             refund_signature: sign_channel.refund_signature,
+            ln_glue_signature,
         };
 
         let signed_sub_channel = SignedSubChannel {
@@ -1269,6 +1369,8 @@ where
             is_offer: true,
             fund_value_satoshis,
             original_funding_redeemscript: funding_redeemscript.clone(),
+            counter_glue_signature: sub_channel_accept.ln_glue_signature,
+            ln_glue_transaction: ln_glue_tx,
         };
 
         self.store
@@ -1398,6 +1500,8 @@ where
             is_offer: false,
             fund_value_satoshis: accepted_sub_channel.fund_value_satoshis,
             original_funding_redeemscript: accepted_sub_channel.original_funding_redeemscript,
+            counter_glue_signature: sub_channel_confirm.ln_glue_signature,
+            ln_glue_transaction: accepted_sub_channel.ln_glue_transaction.clone(),
         };
 
         let msg = SubChannelFinalize {
@@ -1443,7 +1547,8 @@ fn validate_and_get_ln_values_per_party(
     counter_collateral: u64,
     fee_rate: u64,
 ) -> Result<(u64, u64), Error> {
-    let per_party_fee = (DLC_CHANNEL_AND_SPLIT_MIN_WEIGHT as u64) * fee_rate / 2;
+    let per_party_fee =
+        ((DLC_CHANNEL_AND_SPLIT_MIN_WEIGHT + LN_GLUE_TX_WEIGHT) as u64) * fee_rate / 2;
 
     let own_reserve_msat = channel_details.unspendable_punishment_reserve.unwrap_or(0) * 1000;
     let counter_reserve_msat = channel_details.counterparty.unspendable_punishment_reserve * 1000;

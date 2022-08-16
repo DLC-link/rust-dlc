@@ -578,6 +578,7 @@ fn ln_dlc_test() {
         .sub_channel_manager
         .accept_sub_channel(&channel_id)
         .unwrap();
+    println!("a");
     let confirm = alice_node
         .sub_channel_manager
         .on_sub_channel_message(
@@ -586,6 +587,7 @@ fn ln_dlc_test() {
         )
         .unwrap()
         .unwrap();
+    println!("b");
 
     let finalize = bob_node
         .sub_channel_manager
