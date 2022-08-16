@@ -808,7 +808,31 @@ where
             None as Option<PublicKey>
         )?;
 
-        let (accepted_contract, msg) = crate::channel_updater::accept_channel_renewal(
+        let (buffer_input_spk, buffer_input_value, own_buffer_adaptor_sk) =
+            if signed_channel.is_sub_channel {
+                let signed_sub_channel =
+                    get_sub_channel_in_state!(self, *channel_id, Signed, None::<PublicKey>)?;
+                let own_base_secret_key = self
+                    .wallet
+                    .get_secret_key_for_pubkey(&signed_sub_channel.own_points.own_basepoint)?;
+                let own_secret_key = derive_private_key(
+                    &self.secp,
+                    &signed_sub_channel.own_per_split_point,
+                    &own_base_secret_key,
+                )
+                .expect("to get a valid secret.");
+                let buffer_input_spk = signed_sub_channel.split_tx.output_script.clone();
+                let buffer_input_value = signed_sub_channel.split_tx.transaction.output[1].value;
+                (
+                    Some(buffer_input_spk),
+                    Some(buffer_input_value),
+                    Some(own_secret_key),
+                )
+            } else {
+                (None, None, None)
+            };
+
+        let (accepted_contract, msg) = crate::channel_updater::accept_channel_renewal_internal(
             &self.secp,
             &mut signed_channel,
             &offered_contract,
@@ -816,6 +840,9 @@ where
             PEER_TIMEOUT,
             &self.wallet,
             &self.time,
+            buffer_input_spk,
+            buffer_input_value,
+            own_buffer_adaptor_sk,
         )?;
 
         let counter_party = signed_channel.counter_party;
@@ -1319,16 +1346,59 @@ where
         let offered_contract =
             get_contract_in_state!(self, &offered_contract_id, Offered, Some(*peer_id))?;
 
-        let (signed_contract, msg) = crate::channel_updater::verify_renew_accept_and_confirm(
-            &self.secp,
-            renew_accept,
-            &mut signed_channel,
-            &offered_contract,
-            CET_NSEQUENCE,
-            PEER_TIMEOUT,
-            &self.wallet,
-            &self.time,
-        )?;
+        let (
+            buffer_input_spk,
+            buffer_input_value,
+            own_buffer_adaptor_sk,
+            counter_buffer_adaptor_pk,
+        ) = if signed_channel.is_sub_channel {
+            let signed_sub_channel = get_sub_channel_in_state!(
+                self,
+                renew_accept.channel_id,
+                Signed,
+                None::<PublicKey>
+            )?;
+            let own_base_secret_key = self
+                .wallet
+                .get_secret_key_for_pubkey(&signed_sub_channel.own_points.own_basepoint)?;
+            let own_secret_key = derive_private_key(
+                &self.secp,
+                &signed_sub_channel.own_per_split_point,
+                &own_base_secret_key,
+            )
+            .expect("to get a valid secret.");
+            let buffer_input_spk = signed_sub_channel.split_tx.output_script.clone();
+            let buffer_input_value = signed_sub_channel.split_tx.transaction.output[1].value;
+            let accept_revoke_params = signed_sub_channel.counter_points.get_revokable_params(
+                &self.secp,
+                &signed_sub_channel.own_points.revocation_basepoint,
+                &signed_sub_channel.counter_per_split_point,
+            )?;
+            (
+                Some(buffer_input_spk),
+                Some(buffer_input_value),
+                Some(own_secret_key),
+                Some(accept_revoke_params.own_pk.inner),
+            )
+        } else {
+            (None, None, None, None)
+        };
+
+        let (signed_contract, msg) =
+            crate::channel_updater::verify_renew_accept_and_confirm_internal(
+                &self.secp,
+                renew_accept,
+                &mut signed_channel,
+                &offered_contract,
+                CET_NSEQUENCE,
+                PEER_TIMEOUT,
+                &self.wallet,
+                &self.time,
+                buffer_input_spk,
+                buffer_input_value,
+                own_buffer_adaptor_sk,
+                counter_buffer_adaptor_pk,
+            )?;
 
         // Directly confirmed as we're in a channel the fund tx is already confirmed.
         self.store.upsert_channel(
@@ -1394,13 +1464,41 @@ where
         let accepted_contract =
             get_contract_in_state!(self, &contract_id, Accepted, Some(*peer_id))?;
 
-        let (signed_contract, msg) = crate::channel_updater::verify_renew_confirm_and_finalize(
-            &self.secp,
-            &mut signed_channel,
-            &accepted_contract,
-            renew_confirm,
-            &self.wallet,
-        )?;
+        let (buffer_input_spk, buffer_input_value, counter_buffer_adaptor_pk) =
+            if signed_channel.is_sub_channel {
+                let signed_sub_channel = get_sub_channel_in_state!(
+                    self,
+                    renew_confirm.channel_id,
+                    Signed,
+                    None::<PublicKey>
+                )?;
+                let buffer_input_spk = signed_sub_channel.split_tx.output_script.clone();
+                let buffer_input_value = signed_sub_channel.split_tx.transaction.output[1].value;
+                let accept_revoke_params = signed_sub_channel.counter_points.get_revokable_params(
+                    &self.secp,
+                    &signed_sub_channel.own_points.revocation_basepoint,
+                    &signed_sub_channel.counter_per_split_point,
+                )?;
+                (
+                    Some(buffer_input_spk),
+                    Some(buffer_input_value),
+                    Some(accept_revoke_params.own_pk.inner),
+                )
+            } else {
+                (None, None, None)
+            };
+
+        let (signed_contract, msg) =
+            crate::channel_updater::verify_renew_confirm_and_finalize_internal(
+                &self.secp,
+                &mut signed_channel,
+                &accepted_contract,
+                renew_confirm,
+                &self.wallet,
+                buffer_input_spk,
+                buffer_input_value,
+                counter_buffer_adaptor_pk,
+            )?;
 
         self.chain_monitor.lock().unwrap().add_tx(
             prev_tx_id,
@@ -1857,6 +1955,7 @@ where
         let buffer_transaction =
             get_signed_channel_state!(signed_channel, Closing, ref buffer_transaction)?;
 
+        println!("SENDING BUFFFER");
         self.blockchain.send_transaction(buffer_transaction)?;
 
         self.chain_monitor

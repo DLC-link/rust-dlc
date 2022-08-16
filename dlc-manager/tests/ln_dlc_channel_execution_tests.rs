@@ -645,6 +645,69 @@ fn ln_dlc_test() {
         )
         .unwrap();
 
+    let (accept, bob_key) = alice_node
+        .dlc_manager
+        .accept_renew_offer(&channel_id)
+        .unwrap();
+
+    let msg = bob_node
+        .dlc_manager
+        .on_dlc_message(
+            &Message::RenewAccept(accept),
+            alice_node.channel_manager.get_our_node_id(),
+        )
+        .unwrap()
+        .unwrap();
+
+    let msg = alice_node
+        .dlc_manager
+        .on_dlc_message(&msg, bob_key)
+        .unwrap()
+        .unwrap();
+
+    bob_node
+        .dlc_manager
+        .on_dlc_message(&msg, alice_node.channel_manager.get_our_node_id())
+        .unwrap();
+
+    // let (settle_offer, bob_key) = alice_node
+    //     .dlc_manager
+    //     .settle_offer(&channel_id, test_params.contract_input.accept_collateral)
+    //     .unwrap();
+
+    // bob_node
+    //     .dlc_manager
+    //     .on_dlc_message(
+    //         &Message::SettleOffer(settle_offer),
+    //         alice_node.channel_manager.get_our_node_id(),
+    //     )
+    //     .unwrap();
+
+    // let (settle_accept, alice_key) = bob_node
+    //     .dlc_manager
+    //     .accept_settle_offer(&channel_id)
+    //     .unwrap();
+
+    // let msg = alice_node
+    //     .dlc_manager
+    //     .on_dlc_message(&Message::SettleAccept(settle_accept), bob_key)
+    //     .unwrap()
+    //     .unwrap();
+
+    // let msg = bob_node
+    //     .dlc_manager
+    //     .on_dlc_message(&msg, alice_key)
+    //     .unwrap()
+    //     .unwrap();
+
+    // println!("MESSAGE2: {:?}", msg);
+
+    // alice_node
+    //     .dlc_manager
+    //     .on_dlc_message(&msg, bob_key)
+    //     .unwrap()
+    //     .unwrap();
+
     mocks::mock_time::set_time((test_params.contract_input.maturity_time as u64) + 1);
 
     alice_node

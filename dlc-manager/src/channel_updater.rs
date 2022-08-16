@@ -1249,6 +1249,36 @@ where
     S::Target: Signer,
     T::Target: Time,
 {
+    accept_channel_renewal_internal(
+        secp,
+        signed_channel,
+        offered_contract,
+        cet_nsequence,
+        peer_timeout,
+        signer,
+        time,
+        None,
+        None,
+        None,
+    )
+}
+
+pub(crate) fn accept_channel_renewal_internal<S: Deref, T: Deref>(
+    secp: &Secp256k1<All>,
+    signed_channel: &mut SignedChannel,
+    offered_contract: &OfferedContract,
+    cet_nsequence: u32,
+    peer_timeout: u64,
+    signer: &S,
+    time: &T,
+    buffer_input_spk: Option<Script>,
+    buffer_input_value: Option<u64>,
+    own_buffer_adaptor_sk: Option<SecretKey>,
+) -> Result<(AcceptedContract, RenewAccept), Error>
+where
+    S::Target: Signer,
+    T::Target: Time,
+{
     let offer_next_per_update_point = match signed_channel.state {
         SignedChannelState::RenewOffered {
             offer_next_per_update_point,
@@ -1287,11 +1317,16 @@ where
         &accept_per_update_point,
     )?;
 
-    let (fund_vout, buffer_nsequence) = if signed_channel.is_sub_channel {
+    let (fund_vout, buffer_nlocktime) = if signed_channel.is_sub_channel {
         (Some(1), Some(crate::manager::CET_NSEQUENCE))
     } else {
         (None, None)
     };
+
+    println!(
+        "SIGNED CHANNEL FUND TX ID: {:?}",
+        signed_channel.fund_tx.txid()
+    );
 
     let DlcChannelTransactions {
         buffer_transaction,
@@ -1310,15 +1345,24 @@ where
         0,
         cet_nsequence,
         fund_vout,
-        buffer_nsequence,
+        buffer_nlocktime,
     )?;
+
+    println!("BUFFER TX: {:?}", buffer_transaction);
+    println!("BUFFER TX ID: {:?}", buffer_transaction.txid());
+
+    let buffer_input_spk = buffer_input_spk
+        .as_ref()
+        .unwrap_or(&dlc_transactions.funding_script_pubkey);
+    let buffer_input_value = buffer_input_value.unwrap_or(dlc_transactions.get_fund_output().value);
+    let own_buffer_adaptor_sk = own_buffer_adaptor_sk.as_ref().unwrap_or(&own_fund_sk);
 
     let buffer_adaptor_signature = get_tx_adaptor_signature(
         secp,
         &buffer_transaction,
-        dlc_transactions.get_fund_output().value,
-        &dlc_transactions.funding_script_pubkey,
-        &own_fund_sk,
+        buffer_input_value,
+        &buffer_input_spk,
+        &own_buffer_adaptor_sk,
         &offer_revoke_params.publish_pk.inner,
     )?;
 
@@ -1372,6 +1416,40 @@ pub fn verify_renew_accept_and_confirm<S: Deref, T: Deref>(
     peer_timeout: u64,
     signer: &S,
     time: &T,
+) -> Result<(SignedContract, RenewConfirm), Error>
+where
+    S::Target: Signer,
+    T::Target: Time,
+{
+    verify_renew_accept_and_confirm_internal(
+        secp,
+        renew_accept,
+        signed_channel,
+        offered_contract,
+        cet_nsequence,
+        peer_timeout,
+        signer,
+        time,
+        None,
+        None,
+        None,
+        None,
+    )
+}
+
+pub(crate) fn verify_renew_accept_and_confirm_internal<S: Deref, T: Deref>(
+    secp: &Secp256k1<All>,
+    renew_accept: &RenewAccept,
+    signed_channel: &mut SignedChannel,
+    offered_contract: &OfferedContract,
+    cet_nsequence: u32,
+    peer_timeout: u64,
+    signer: &S,
+    time: &T,
+    buffer_input_spk: Option<Script>,
+    buffer_input_value: Option<u64>,
+    own_buffer_adaptor_sk: Option<SecretKey>,
+    counter_buffer_own_pk: Option<PublicKey>,
 ) -> Result<(SignedContract, RenewConfirm), Error>
 where
     S::Target: Signer,
@@ -1450,12 +1528,21 @@ where
         Some(signed_channel.channel_id),
     )?;
 
+    let buffer_input_spk = buffer_input_spk
+        .as_ref()
+        .unwrap_or(&dlc_transactions.funding_script_pubkey);
+    let buffer_input_value = buffer_input_value.unwrap_or(dlc_transactions.get_fund_output().value);
+    let own_buffer_adaptor_sk = own_buffer_adaptor_sk.as_ref().unwrap_or(&own_fund_sk);
+    let counter_buffer_own_pk = counter_buffer_own_pk
+        .as_ref()
+        .unwrap_or(&signed_contract.accepted_contract.accept_params.fund_pubkey);
+
     verify_tx_adaptor_signature(
         secp,
         &buffer_transaction,
-        dlc_transactions.get_fund_output().value,
-        &dlc_transactions.funding_script_pubkey,
-        &signed_contract.accepted_contract.accept_params.fund_pubkey,
+        buffer_input_value,
+        &buffer_input_spk,
+        &counter_buffer_own_pk,
         &offer_revoke_params.publish_pk.inner,
         &renew_accept.buffer_adaptor_signature,
     )?;
@@ -1463,9 +1550,9 @@ where
     let own_buffer_adaptor_signature = get_tx_adaptor_signature(
         secp,
         &buffer_transaction,
-        dlc_transactions.get_fund_output().value,
+        buffer_input_value,
         &dlc_transactions.funding_script_pubkey,
-        &own_fund_sk,
+        &own_buffer_adaptor_sk,
         &accept_revoke_params.publish_pk.inner,
     )?;
 
@@ -1507,6 +1594,31 @@ pub fn verify_renew_confirm_and_finalize<S: Deref>(
 where
     S::Target: Signer,
 {
+    verify_renew_confirm_and_finalize_internal(
+        secp,
+        signed_channel,
+        accepted_contract,
+        renew_confirm,
+        signer,
+        None,
+        None,
+        None,
+    )
+}
+
+pub(crate) fn verify_renew_confirm_and_finalize_internal<S: Deref>(
+    secp: &Secp256k1<All>,
+    signed_channel: &mut SignedChannel,
+    accepted_contract: &AcceptedContract,
+    renew_confirm: &RenewConfirm,
+    signer: &S,
+    buffer_input_spk: Option<Script>,
+    buffer_input_value: Option<u64>,
+    counter_buffer_own_pk: Option<PublicKey>,
+) -> Result<(SignedContract, RenewFinalize), Error>
+where
+    S::Target: Signer,
+{
     let (
         offer_per_update_point,
         accept_per_update_point,
@@ -1530,12 +1642,21 @@ where
         .counter_points
         .get_own_pk(secp, &offer_per_update_point)?;
 
+    let buffer_input_spk = buffer_input_spk
+        .as_ref()
+        .unwrap_or(&accepted_contract.dlc_transactions.funding_script_pubkey);
+    let buffer_input_value =
+        buffer_input_value.unwrap_or(accepted_contract.dlc_transactions.get_fund_output().value);
+    let counter_buffer_own_pk = counter_buffer_own_pk
+        .as_ref()
+        .unwrap_or(&accepted_contract.offered_contract.offer_params.fund_pubkey);
+
     verify_tx_adaptor_signature(
         secp,
         buffer_transaction,
-        accepted_contract.dlc_transactions.get_fund_output().value,
-        &accepted_contract.dlc_transactions.funding_script_pubkey,
-        &accepted_contract.offered_contract.offer_params.fund_pubkey,
+        buffer_input_value,
+        &buffer_input_spk,
+        &counter_buffer_own_pk,
         &own_publish_pk,
         &renew_confirm.buffer_adaptor_signature,
     )?;

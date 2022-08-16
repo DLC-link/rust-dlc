@@ -622,11 +622,6 @@ where
             offered_contract.fee_rate_per_vb,
         )?;
 
-        println!(
-            "VALUE TO OWN: {}, VALUE TO COUNTER: {}",
-            own_to_self_msat, counter_to_self_msat
-        );
-
         let funding_redeemscript = channel_details.funding_redeemscript.clone();
 
         let funding_txo = channel_details
@@ -923,6 +918,7 @@ where
         )
         .unwrap();
 
+        println!("Sending split");
         self.blockchain.send_transaction(&split_tx)?;
 
         let closing_sub_channel = ClosingSubChannel {

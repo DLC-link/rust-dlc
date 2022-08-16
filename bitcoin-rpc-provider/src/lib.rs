@@ -331,6 +331,16 @@ impl Wallet for BitcoinCoreProvider {
 impl Blockchain for BitcoinCoreProvider {
     fn send_transaction(&self, transaction: &Transaction) -> Result<(), ManagerError> {
         println!("SEDNING: {}", transaction.txid());
+        use bitcoin::consensus::Encodable;
+        use std::fmt::Write;
+        let mut writer = Vec::new();
+        transaction.consensus_encode(&mut writer).unwrap();
+        let mut serialized = String::new();
+        for x in writer {
+            let _ = write!(&mut serialized, "{:02x}", x).unwrap();
+        }
+        println!("{}", serialized);
+        println!("{:?}", transaction.input[0].witness);
         self.client
             .lock()
             .unwrap()
@@ -440,16 +450,6 @@ fn poll_for_fee_estimates(client: Arc<Mutex<Client>>, fees: Arc<HashMap<Target, 
 
 impl BroadcasterInterface for BitcoinCoreProvider {
     fn broadcast_transaction(&self, tx: &Transaction) {
-        use bitcoin::consensus::Encodable;
-        use std::fmt::Write;
-        let mut writer = Vec::new();
-        tx.consensus_encode(&mut writer).unwrap();
-        let mut serialized = String::new();
-        for x in writer {
-            let _ = write!(&mut serialized, "{:02x}", x).unwrap();
-        }
-        println!("{}", serialized);
-        println!("{:?}", tx.input[0].witness);
         self.send_transaction(tx).expect("Not to error.");
     }
 }
