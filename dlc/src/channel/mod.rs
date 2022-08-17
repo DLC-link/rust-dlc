@@ -175,7 +175,7 @@ pub fn verify_tx_adaptor_signature<C: Verification>(
 
 /// Returns a settle transaction.
 pub fn create_settle_transaction(
-    fund_tx_in: &TxIn,
+    prev_outpoint: &OutPoint,
     offer_revoke_params: &RevokeParams,
     accept_revoke_params: &RevokeParams,
     offer_payout: u64,
@@ -225,10 +225,17 @@ pub fn create_settle_transaction(
         o.value += remaining_fee;
     }
 
+    let input = TxIn {
+        previous_output: prev_outpoint.clone(),
+        script_sig: Script::default(),
+        sequence: crate::util::get_sequence(lock_time),
+        witness: Witness::default(),
+    };
+
     Transaction {
         version: super::TX_VERSION,
         lock_time,
-        input: vec![fund_tx_in.clone()],
+        input: vec![input],
         output,
     }
 }
@@ -290,7 +297,7 @@ pub fn create_renewal_channel_transactions(
     cet_lock_time: u32,
     cet_nsequence: u32,
     fund_vout: Option<usize>,
-    buffer_lock_time: Option<u32>,
+    buffer_nsequence: Option<u32>,
 ) -> Result<DlcChannelTransactions, Error> {
     let extra_fee =
         super::util::weight_to_fee(BUFFER_TX_WEIGHT + CET_EXTRA_WEIGHT, fee_rate_per_vb);
@@ -315,7 +322,7 @@ pub fn create_renewal_channel_transactions(
 
     let tx_in = TxIn {
         previous_output: outpoint,
-        sequence: crate::util::get_sequence(buffer_lock_time.unwrap_or(cet_lock_time)),
+        sequence: buffer_nsequence.unwrap_or(crate::util::get_sequence(cet_lock_time)),
         script_sig: Script::default(),
         witness: Witness::default(),
     };
@@ -326,7 +333,7 @@ pub fn create_renewal_channel_transactions(
         &tx_in,
         &buffer_descriptor,
         fund_output.value - extra_fee,
-        buffer_lock_time.unwrap_or(cet_lock_time),
+        cet_lock_time,
     );
 
     println!("Fund output value: {}", fund_output.value);
@@ -852,7 +859,7 @@ mod tests {
         let payout = 100000000;
         let csv_timelock = 100;
         let settle_tx = create_settle_transaction(
-            &TxIn::default(),
+            &OutPoint::default(),
             &offer_params,
             &accept_params,
             payout,

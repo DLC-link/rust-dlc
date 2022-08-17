@@ -4,13 +4,9 @@
 use std::ops::Deref;
 
 use bitcoin::{OutPoint, Script, Transaction};
-use dlc::{
-    channel::{
-        get_tx_adaptor_signature,
-        sub_channel::{SplitTx, LN_GLUE_TX_WEIGHT},
-        RevokeParams,
-    },
-    PartyParams, Payout,
+use dlc::channel::{
+    get_tx_adaptor_signature,
+    sub_channel::{SplitTx, LN_GLUE_TX_WEIGHT},
 };
 use dlc_messages::{
     channel::{AcceptChannel, OfferChannel},
@@ -41,7 +37,9 @@ use secp256k1_zkp::{
 use crate::{
     channel::Channel,
     channel::{offered_channel::OfferedChannel, party_points::PartyBasePoints},
-    channel_updater,
+    channel_updater::{
+        self, FundingInfo, SubChannelSignInfo, SubChannelSignVerifyInfo, SubChannelVerifyInfo,
+    },
     contract::{contract_input::ContractInput, Contract},
     custom_signer::CustomSigner,
     error::Error,
@@ -740,30 +738,13 @@ where
                 own_to_self_msat,
             )?;
 
-        let tx_create = |offer_params: &PartyParams,
-                         accept_params: &PartyParams,
-                         offer_revoke_params: &RevokeParams,
-                         accept_revoke_params: &RevokeParams,
-                         payouts: &[Payout],
-                         refund_lock_time: u32,
-                         fee_rate_per_vb: u64,
-                         cet_lock_time: u32,
-                         cet_nsequence: u32| {
-            dlc::channel::create_renewal_channel_transactions(
-                offer_params,
-                accept_params,
-                offer_revoke_params,
-                accept_revoke_params,
-                &split_tx.transaction,
-                &split_tx.output_script,
-                payouts,
-                refund_lock_time,
-                fee_rate_per_vb,
-                cet_lock_time,
-                cet_nsequence,
-                Some(1),
-                Some(crate::manager::CET_NSEQUENCE),
-            )
+        let sub_channel_info = SubChannelSignInfo {
+            funding_info: FundingInfo {
+                funding_tx: split_tx.transaction.clone(),
+                funding_script_pubkey: split_tx.output_script.clone(),
+                funding_input_value: split_tx.transaction.output[1].value,
+            },
+            own_adaptor_sk: own_secret_key,
         };
         let (mut accepted_channel, mut accepted_contract, accept_channel) =
             channel_updater::accept_channel_offer_internal(
@@ -771,10 +752,7 @@ where
                 &offered_channel,
                 &offered_contract,
                 &self.wallet,
-                &tx_create,
-                Some(split_tx.output_script.clone()),
-                Some(split_tx.transaction.output[1].value),
-                Some(own_secret_key),
+                Some(sub_channel_info),
             )?;
 
         let ln_glue_signature = dlc::util::get_raw_sig_for_tx_input(
@@ -988,8 +966,10 @@ where
             &signed_sub_channel.counter_glue_signature,
         )?;
 
+        println!("A");
         self.dlc_channel_manager
             .force_close_sub_channel(channel_id, closing)?;
+        println!("B");
 
         self.blockchain.send_transaction(&glue_tx)?;
 
@@ -1271,30 +1251,14 @@ where
             payout_spk: sub_channel_accept.payout_spk.clone(),
         };
 
-        let tx_create = |offer_params: &PartyParams,
-                         accept_params: &PartyParams,
-                         offer_revoke_params: &RevokeParams,
-                         accept_revoke_params: &RevokeParams,
-                         payouts: &[Payout],
-                         refund_lock_time: u32,
-                         fee_rate_per_vb: u64,
-                         cet_lock_time: u32,
-                         cet_nsequence: u32| {
-            dlc::channel::create_renewal_channel_transactions(
-                offer_params,
-                accept_params,
-                offer_revoke_params,
-                accept_revoke_params,
-                &split_tx.transaction,
-                &split_tx.output_script,
-                payouts,
-                refund_lock_time,
-                fee_rate_per_vb,
-                cet_lock_time,
-                cet_nsequence,
-                Some(1),
-                Some(crate::manager::CET_NSEQUENCE),
-            )
+        let sub_channel_info = SubChannelSignVerifyInfo {
+            funding_info: FundingInfo {
+                funding_tx: split_tx.transaction.clone(),
+                funding_script_pubkey: split_tx.output_script.clone(),
+                funding_input_value: split_tx.transaction.output[1].value,
+            },
+            own_adaptor_sk: own_secret_key,
+            counter_adaptor_pk: accept_revoke_params.own_pk.inner,
         };
 
         let (mut signed_channel, signed_contract, sign_channel) =
@@ -1306,11 +1270,7 @@ where
                 //TODO(tibo): this should be parameterizable.
                 crate::manager::CET_NSEQUENCE,
                 &self.wallet,
-                &tx_create,
-                Some(split_tx.output_script.clone()),
-                Some(split_tx.transaction.output[1].value),
-                Some(accept_revoke_params.own_pk.inner),
-                Some(own_secret_key),
+                Some(sub_channel_info),
             )?;
 
         // TODO(tibo): consider having separate ids.
@@ -1471,15 +1431,22 @@ where
                 &accepted_sub_channel.offer_per_split_point,
             )?;
 
+        let sub_channel_info = SubChannelVerifyInfo {
+            funding_info: FundingInfo {
+                funding_tx: accepted_sub_channel.split_tx.transaction.clone(),
+                funding_script_pubkey: accepted_sub_channel.split_tx.output_script.clone(),
+                funding_input_value: accepted_sub_channel.split_tx.transaction.output[1].value,
+            },
+            counter_adaptor_pk: offer_revoke_params.own_pk.inner,
+        };
+
         let (signed_channel, signed_contract) = channel_updater::verify_signed_channel_internal(
             &self.secp,
             &accepted_channel,
             &accepted_contract,
             &sign_channel,
             &self.wallet,
-            Some(accepted_sub_channel.split_tx.output_script.clone()),
-            Some(accepted_sub_channel.split_tx.transaction.output[1].value),
-            Some(offer_revoke_params.own_pk.inner),
+            Some(sub_channel_info),
         )?;
 
         let signed_sub_channel = SignedSubChannel {
