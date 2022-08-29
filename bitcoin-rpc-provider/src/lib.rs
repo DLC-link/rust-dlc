@@ -190,10 +190,11 @@ impl Wallet for BitcoinCoreProvider {
     ) -> Result<Vec<Utxo>, ManagerError> {
         let utxo_res = self
             .client
-            .list_unspent(None, None, None, None, None)
+            .list_unspent(None, None, None, Some(false), None)
             .map_err(rpc_err_to_manager_err)?;
         let mut utxo_pool: Vec<UtxoWrap> = utxo_res
             .iter()
+            .filter(|x| x.script_pub_key.is_v0_p2wpkh())
             .map(|x| {
                 Ok(UtxoWrap(Utxo {
                     tx_out: TxOut {
