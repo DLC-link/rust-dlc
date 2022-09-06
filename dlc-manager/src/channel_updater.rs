@@ -1431,12 +1431,6 @@ where
         (None, None)
     };
 
-    println!(
-        "SIGNED CHANNEL FUND TX ID: {:?}",
-        signed_channel.fund_tx.txid()
-    );
-    println!("FUND TX VOUT: {}", signed_channel.fund_output_index);
-
     let DlcChannelTransactions {
         buffer_transaction,
         buffer_script_pubkey,
@@ -1457,13 +1451,6 @@ where
         buffer_nsequence,
     )?;
 
-    println!("BUFFER TX: {:?}", buffer_transaction);
-    println!("BUFFER TX ID: {:?}", buffer_transaction.txid());
-
-    // let buffer_input_spk = buffer_input_spk
-    //     .as_ref()
-    //     .unwrap_or(&dlc_transactions.funding_script_pubkey);
-    // let buffer_input_value = buffer_input_value.unwrap_or(dlc_transactions.get_fund_output().value);
     let own_buffer_adaptor_sk = own_buffer_adaptor_sk.as_ref().unwrap_or(&own_fund_sk);
 
     let buffer_input_value = if signed_channel.is_sub_channel {
@@ -1753,7 +1740,6 @@ where
         .as_ref()
         .unwrap_or(&accepted_contract.offered_contract.offer_params.fund_pubkey);
 
-    println!("HERE? {}", signed_channel.fund_output_index);
     verify_tx_adaptor_signature(
         secp,
         buffer_transaction,
@@ -1763,7 +1749,7 @@ where
         &own_publish_pk,
         &renew_confirm.buffer_adaptor_signature,
     )?;
-    println!("No?");
+
     let cet_adaptor_signatures: Vec<_> = (&renew_confirm.cet_adaptor_signatures).into();
     let (signed_contract, _) = verify_signed_contract_internal(
         secp,
@@ -2188,7 +2174,6 @@ where
 
     if let Some(sub_channel) = sub_channel {
         let signed_sub_channel = &sub_channel.signed_sub_channel;
-        println!("b");
         let own_base_secret_key =
             signer.get_secret_key_for_pubkey(&signed_sub_channel.own_points.own_basepoint)?;
         let own_secret_key = derive_private_key(
@@ -2197,7 +2182,6 @@ where
             &own_base_secret_key,
         )
         .expect("to get a valid secret.");
-        println!("c");
         let sig = dlc::util::get_raw_sig_for_tx_input(
             secp,
             &mut buffer_transaction,
@@ -2206,7 +2190,6 @@ where
             signed_sub_channel.split_tx.transaction.output[1].value,
             &own_secret_key,
         )?;
-        println!("d");
 
         let (own_pk, counter_pk, offer_params, accept_params) = {
             let own_revoke_params = signed_sub_channel.own_points.get_revokable_params(
@@ -2235,9 +2218,6 @@ where
                 )
             }
         };
-        println!("e");
-
-        println!("NSEQUENCE: {}", buffer_transaction.input[0].sequence);
 
         dlc::channel::satisfy_buffer_descriptor(
             &mut buffer_transaction,
@@ -2248,7 +2228,6 @@ where
             &counter_pk,
             &counter_buffer_signature,
         )?;
-        println!("c");
     } else {
         let buffer_input_sk =
             signer.get_secret_key_for_pubkey(&signed_channel.own_params.fund_pubkey)?;
@@ -2395,7 +2374,6 @@ where
 
     if let Some(sub_channel) = sub_channel {
         let signed_sub_channel = &sub_channel.signed_sub_channel;
-        println!("b");
         let own_base_secret_key =
             signer.get_secret_key_for_pubkey(&signed_sub_channel.own_points.own_basepoint)?;
         let own_secret_key = derive_private_key(
@@ -2404,7 +2382,6 @@ where
             &own_base_secret_key,
         )
         .expect("to get a valid secret.");
-        println!("c");
         let sig = dlc::util::get_raw_sig_for_tx_input(
             secp,
             &settle_tx,
@@ -2413,7 +2390,6 @@ where
             signed_sub_channel.split_tx.transaction.output[1].value,
             &own_secret_key,
         )?;
-        println!("d");
 
         let (own_pk, counter_pk, offer_params, accept_params) = {
             let own_revoke_params = signed_sub_channel.own_points.get_revokable_params(

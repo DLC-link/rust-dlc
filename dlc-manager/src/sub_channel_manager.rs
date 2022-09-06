@@ -680,8 +680,6 @@ where
 
         let output_values = [ln_output_value, dlc_output_value];
 
-        println!("OUTPUT VALUES: {:?}", output_values);
-
         let split_tx = dlc::channel::sub_channel::create_split_tx(
             &offer_revoke_params,
             &accept_revoke_params,
@@ -709,8 +707,6 @@ where
             });
 
         let split_tx_adaptor_signature = split_tx_adaptor_signature.unwrap();
-
-        println!("OUTPUT SCRIPT {:?}", split_tx.output_script);
 
         let glue_tx_output_value =
             ln_output_value - (LN_GLUE_TX_WEIGHT as u64 * offered_contract.fee_rate_per_vb);
@@ -896,7 +892,6 @@ where
         )
         .unwrap();
 
-        println!("Sending split");
         self.blockchain.send_transaction(&split_tx)?;
 
         let closing_sub_channel = ClosingSubChannel {
@@ -966,10 +961,8 @@ where
             &signed_sub_channel.counter_glue_signature,
         )?;
 
-        println!("A");
         self.dlc_channel_manager
             .force_close_sub_channel(channel_id, closing)?;
-        println!("B");
 
         self.blockchain.send_transaction(&glue_tx)?;
 
@@ -1116,17 +1109,12 @@ where
             None as Option<PublicKey>
         )?;
 
-        let (own_to_self_value_msat, counter_to_self_msat) = validate_and_get_ln_values_per_party(
+        let (own_to_self_value_msat, _) = validate_and_get_ln_values_per_party(
             &channel_details,
             offered_contract.total_collateral - offered_contract.offer_params.collateral,
             offered_contract.offer_params.collateral,
             offered_contract.fee_rate_per_vb,
         )?;
-
-        println!(
-            "VALUE TO OWN: {}, VALUE TO COUNTER: {}",
-            own_to_self_value_msat, counter_to_self_msat
-        );
 
         let dlc_output_value = offered_contract.total_collateral
             + (dlc::channel::BUFFER_TX_WEIGHT
@@ -1147,8 +1135,6 @@ where
             - dlc::channel::sub_channel::SPLIT_TX_WEIGHT as u64 * offered_contract.fee_rate_per_vb;
 
         let output_values = [ln_output_value, dlc_output_value];
-
-        println!("OUTPUT VALUES: {:?}", output_values);
 
         let split_tx = dlc::channel::sub_channel::create_split_tx(
             &offer_revoke_params,
@@ -1195,8 +1181,6 @@ where
             &own_base_secret_key,
         )
         .expect("to get a valid secret.");
-
-        println!("OUTPUT SCRIPT {:?}", split_tx.output_script);
 
         let glue_tx_output_value =
             ln_output_value - (LN_GLUE_TX_WEIGHT as u64 * offered_contract.fee_rate_per_vb);

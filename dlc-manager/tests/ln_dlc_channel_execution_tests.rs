@@ -2,14 +2,9 @@
 mod test_utils;
 mod console_logger;
 
-use std::{
-    collections::HashMap,
-    ops::Deref,
-    sync::{Arc, Mutex},
-    time::SystemTime,
-};
+use std::{collections::HashMap, sync::Arc, time::SystemTime};
 
-use bitcoin::{consensus::Decodable, hashes::Hash, network, Amount, Network, Transaction};
+use bitcoin::{consensus::Decodable, hashes::Hash, Amount, Network, Transaction};
 use bitcoin_bech32::WitnessProgram;
 use bitcoin_rpc_provider::BitcoinCoreProvider;
 use bitcoin_test_utils::rpc_helpers::init_clients;
@@ -20,31 +15,26 @@ use dlc_manager::{
     custom_signer::{CustomKeysManager, CustomSigner},
     manager::Manager,
     sub_channel_manager::SubChannelManager,
-    Blockchain, Oracle,
+    Blockchain, ChannelId, Oracle,
 };
-use dlc_messages::{
-    sub_channel::{SubChannelInfo, SubChannelMessage},
-    Message,
-};
+use dlc_messages::{sub_channel::SubChannelMessage, Message};
 use lightning::{
     chain::{
         keysinterface::{KeysInterface, KeysManager, Recipient},
         BestBlock, Filter, Listen,
     },
     ln::{
-        channelmanager::{ChainParameters, SimpleArcChannelManager},
-        features::Features,
+        channelmanager::ChainParameters,
         peer_handler::{IgnoringMessageHandler, MessageHandler},
     },
     routing::{
         gossip::{NetworkGraph, NodeId},
-        router::{Route, RouteHop, RouteParameters},
+        router::{RouteHop, RouteParameters},
         scoring::{ChannelUsage, Score},
     },
     util::{
         config::UserConfig,
         events::{Event, EventHandler, EventsProvider, PaymentPurpose},
-        logger::Logger,
     },
 };
 use lightning_persister::FilesystemPersister;
@@ -116,11 +106,17 @@ struct LnDlcParty {
     dlc_manager: Arc<DlcChannelManager>,
 }
 
+enum TestPath {
+    EstablishedClose,
+    RenewedClose,
+    SettledClose,
+    SettledRenewedClose,
+}
+
 impl LnDlcParty {
     fn update_to_chain_tip(&mut self) {
         let chain_tip_height = self.bitcoind_client.get_blockchain_height().unwrap();
         for i in self.chain_height + 1..=chain_tip_height {
-            println!("HEIGHT :{}", i);
             let block = self.bitcoind_client.get_block_at_height(i).unwrap();
             self.channel_manager.block_connected(&block, i as u32);
             for ftxo in self.chain_monitor.list_monitors() {
@@ -180,7 +176,6 @@ impl MockSocketDescriptor {
 
 impl lightning::ln::peer_handler::SocketDescriptor for MockSocketDescriptor {
     fn send_data(&mut self, data: &[u8], _resume_read: bool) -> usize {
-        println!("Sending data! {}", self.id);
         self.counter_peer_mng
             .clone()
             .read_event(&mut self.counter_descriptor.as_mut().unwrap(), data)
@@ -411,7 +406,29 @@ fn create_ln_node(
 
 #[test]
 #[ignore]
-fn ln_dlc_test() {
+fn ln_dlc_established_close() {
+    ln_dlc_test(TestPath::EstablishedClose);
+}
+
+#[test]
+#[ignore]
+fn ln_dlc_renewed_close() {
+    ln_dlc_test(TestPath::RenewedClose);
+}
+
+#[test]
+#[ignore]
+fn ln_dlc_settled_close() {
+    ln_dlc_test(TestPath::SettledClose);
+}
+
+#[test]
+#[ignore]
+fn ln_dlc_settled_renewed_close() {
+    ln_dlc_test(TestPath::SettledRenewedClose);
+}
+
+fn ln_dlc_test(test_path: TestPath) {
     // Initialize the LDK data directory if necessary.
     let ldk_data_dir = "./.ldk".to_string();
     std::fs::create_dir_all(ldk_data_dir.clone()).unwrap();
@@ -499,7 +516,7 @@ fn ln_dlc_test() {
     let payment_hash = lightning::ln::PaymentHash(
         bitcoin::hashes::sha256::Hash::hash(&payment_preimage.0[..]).into_inner(),
     );
-    let payment_secret = bob_node
+    let _ = bob_node
         .channel_manager
         .create_inbound_payment_for_hash(payment_hash, None, 7200)
         .unwrap();
@@ -565,8 +582,6 @@ fn ln_dlc_test() {
             &vec![oracle_announcements],
         )
         .unwrap();
-    println!("{:?}", offer.channel_id);
-    println!("{:?}", channel_id);
     bob_node
         .sub_channel_manager
         .on_sub_channel_message(
@@ -578,7 +593,6 @@ fn ln_dlc_test() {
         .sub_channel_manager
         .accept_sub_channel(&channel_id)
         .unwrap();
-    println!("a");
     let confirm = alice_node
         .sub_channel_manager
         .on_sub_channel_message(
@@ -587,7 +601,6 @@ fn ln_dlc_test() {
         )
         .unwrap()
         .unwrap();
-    println!("b");
 
     let finalize = bob_node
         .sub_channel_manager
@@ -628,10 +641,85 @@ fn ln_dlc_test() {
         .send_spontaneous_payment(&route, Some(payment_preimage))
         .unwrap();
 
+    if let TestPath::RenewedClose = test_path {
+        renew(&alice_node, &bob_node, channel_id, &test_params);
+    } else if let TestPath::SettledClose | TestPath::SettledRenewedClose = test_path {
+        settle(&alice_node, &bob_node, channel_id, &test_params);
+
+        if let TestPath::SettledRenewedClose = test_path {
+            renew(&alice_node, &bob_node, channel_id, &test_params);
+        }
+    }
+
+    mocks::mock_time::set_time((test_params.contract_input.maturity_time as u64) + 1);
+
+    alice_node
+        .sub_channel_manager
+        .initiate_force_close_sub_channels(&channel_id)
+        .unwrap();
+
+    sink_rpc
+        .generate_to_address(500, &sink_address)
+        .expect("RPC Error");
+
+    alice_node
+        .sub_channel_manager
+        .finalize_force_close_sub_channels(&channel_id)
+        .unwrap();
+}
+
+fn settle(
+    alice_node: &LnDlcParty,
+    bob_node: &LnDlcParty,
+    channel_id: ChannelId,
+    test_params: &TestParams,
+) {
+    let (settle_offer, bob_key) = alice_node
+        .dlc_manager
+        .settle_offer(&channel_id, test_params.contract_input.accept_collateral)
+        .unwrap();
+
+    bob_node
+        .dlc_manager
+        .on_dlc_message(
+            &Message::SettleOffer(settle_offer),
+            alice_node.channel_manager.get_our_node_id(),
+        )
+        .unwrap();
+
+    let (settle_accept, alice_key) = bob_node
+        .dlc_manager
+        .accept_settle_offer(&channel_id)
+        .unwrap();
+
+    let msg = alice_node
+        .dlc_manager
+        .on_dlc_message(&Message::SettleAccept(settle_accept), bob_key)
+        .unwrap()
+        .unwrap();
+
+    let msg = bob_node
+        .dlc_manager
+        .on_dlc_message(&msg, alice_key)
+        .unwrap()
+        .unwrap();
+
+    alice_node
+        .dlc_manager
+        .on_dlc_message(&msg, bob_key)
+        .unwrap();
+}
+
+fn renew(
+    alice_node: &LnDlcParty,
+    bob_node: &LnDlcParty,
+    channel_id: ChannelId,
+    test_params: &TestParams,
+) {
     let (renew_offer, _) = bob_node
         .dlc_manager
         .renew_offer(
-            &offer.channel_id,
+            &channel_id,
             test_params.contract_input.accept_collateral,
             &test_params.contract_input,
         )
@@ -668,58 +756,5 @@ fn ln_dlc_test() {
     bob_node
         .dlc_manager
         .on_dlc_message(&msg, alice_node.channel_manager.get_our_node_id())
-        .unwrap();
-
-    let (settle_offer, bob_key) = alice_node
-        .dlc_manager
-        .settle_offer(&channel_id, test_params.contract_input.accept_collateral)
-        .unwrap();
-
-    bob_node
-        .dlc_manager
-        .on_dlc_message(
-            &Message::SettleOffer(settle_offer),
-            alice_node.channel_manager.get_our_node_id(),
-        )
-        .unwrap();
-
-    let (settle_accept, alice_key) = bob_node
-        .dlc_manager
-        .accept_settle_offer(&channel_id)
-        .unwrap();
-
-    let msg = alice_node
-        .dlc_manager
-        .on_dlc_message(&Message::SettleAccept(settle_accept), bob_key)
-        .unwrap()
-        .unwrap();
-
-    let msg = bob_node
-        .dlc_manager
-        .on_dlc_message(&msg, alice_key)
-        .unwrap()
-        .unwrap();
-
-    println!("MESSAGE2: {:?}", msg);
-
-    alice_node
-        .dlc_manager
-        .on_dlc_message(&msg, bob_key)
-        .unwrap();
-
-    mocks::mock_time::set_time((test_params.contract_input.maturity_time as u64) + 1);
-
-    alice_node
-        .sub_channel_manager
-        .initiate_force_close_sub_channels(&channel_id)
-        .unwrap();
-
-    sink_rpc
-        .generate_to_address(500, &sink_address)
-        .expect("RPC Error");
-
-    alice_node
-        .sub_channel_manager
-        .finalize_force_close_sub_channels(&channel_id)
         .unwrap();
 }
