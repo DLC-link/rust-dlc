@@ -36,6 +36,7 @@ chrono = "0.4"
 criterion = "0.3"
 dlc-manager = {path = ".", features = ["use-serde"]}
 dlc-messages = {path = "../dlc-messages", features = ["serde"]}
+electrs-blockchain-provider = {path = "../electrs-blockchain-provider"}
 env_logger = "0.8.4"
 lightning-block-sync = {version = "0.0.108", git = "https://github.com/p2pderivatives/rust-lightning/", branch = "split-tx-experiment"}
 lightning-persister = {version = "0.0.108", git = "https://github.com/p2pderivatives/rust-lightning/", branch = "split-tx-experiment"}
@@ -43,6 +44,7 @@ mocks = {path = "../mocks"}
 secp256k1-zkp = {version = "0.6.0", features = ["bitcoin_hashes", "rand", "rand-std", "global-context", "use-serde"]}
 serde = "1.0"
 serde_json = "1.0"
+simple-wallet = {path = "../simple-wallet"}
 
 [[bench]]
 harness = false

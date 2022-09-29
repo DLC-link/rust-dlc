@@ -16,7 +16,10 @@ pub fn get_new_wallet_rpc(
     wallet_name: &str,
     auth: Auth,
 ) -> Result<Client, bitcoincore_rpc::Error> {
-    default_rpc.create_wallet(wallet_name, Some(false), None, None, None)?;
+    let wallet_list = default_rpc.list_wallets().unwrap();
+    if !wallet_list.contains(&wallet_name.to_owned()) {
+        default_rpc.create_wallet(wallet_name, Some(false), None, None, None)?;
+    }
     let rpc_url = format!("{}/wallet/{}", rpc_base(), wallet_name);
     Client::new(&rpc_url, auth)
 }
@@ -59,7 +62,7 @@ pub fn init_clients() -> (Client, Client, Client) {
 
     sink_rpc.generate_to_address(1, &offer_address).unwrap();
     sink_rpc.generate_to_address(1, &accept_address).unwrap();
-    sink_rpc.generate_to_address(100, &sink_address).unwrap();
+    sink_rpc.generate_to_address(101, &sink_address).unwrap();
 
     (offer_rpc, accept_rpc, sink_rpc)
 }

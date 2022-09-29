@@ -11,9 +11,7 @@
 #![deny(unused_imports)]
 #![deny(missing_docs)]
 
-extern crate dlc_manager;
-extern crate sled;
-
+use bitcoin::{Address, Txid};
 use dlc_manager::chain_monitor::ChainMonitor;
 use dlc_manager::channel::accepted_channel::AcceptedChannel;
 use dlc_manager::channel::offered_channel::OfferedChannel;
@@ -25,9 +23,12 @@ use dlc_manager::contract::ser::Serializable;
 use dlc_manager::contract::signed_contract::SignedContract;
 use dlc_manager::contract::{ClosedContract, Contract, FailedAcceptContract, FailedSignContract};
 use dlc_manager::sub_channel_manager::{
-    AcceptedSubChannel, OfferedSubChannel, SignedSubChannel, SubChannel, SubChannelStorage,
+    AcceptedSubChannel, ClosingSubChannel, OfferedSubChannel, SignedSubChannel, SubChannel,
 };
-use dlc_manager::{error::Error, ContractId, Storage};
+use dlc_manager::{error::Error, ContractId, Storage, Utxo};
+use lightning::util::ser::{Readable, Writeable};
+use secp256k1_zkp::{PublicKey, SecretKey};
+use simple_wallet::WalletStorage;
 use sled::transaction::{ConflictableTransactionResult, UnabortableTransactionError};
 use sled::{Db, Transactional, Tree};
 use std::convert::TryInto;
@@ -38,6 +39,9 @@ const CHANNEL_TREE: u8 = 2;
 const SUB_CHANNEL_TREE: u8 = 3;
 const CHAIN_MONITOR_TREE: u8 = 4;
 const CHAIN_MONITOR_KEY: u8 = 5;
+const UTXO_TREE: u8 = 6;
+const KEY_PAIR_TREE: u8 = 7;
+const ADDRESS_TREE: u8 = 8;
 
 /// Implementation of Storage interface using the sled DB backend.
 pub struct SledStorageProvider {
@@ -137,6 +141,7 @@ convertible_enum!(
         Offered = 500,
         Accepted,
         Signed,
+        Closing,
     },
     SubChannel
 );
@@ -197,6 +202,18 @@ impl SledStorageProvider {
 
     fn sub_channel_tree(&self) -> Result<Tree, Error> {
         self.open_tree(&[SUB_CHANNEL_TREE])
+    }
+
+    fn utxo_tree(&self) -> Result<Tree, Error> {
+        self.open_tree(&[UTXO_TREE])
+    }
+
+    fn address_tree(&self) -> Result<Tree, Error> {
+        self.open_tree(&[ADDRESS_TREE])
+    }
+
+    fn key_pair_tree(&self) -> Result<Tree, Error> {
+        self.open_tree(&[KEY_PAIR_TREE])
     }
 }
 
@@ -379,9 +396,7 @@ impl Storage for SledStorageProvider {
         };
         Ok(deserialized)
     }
-}
 
-impl SubChannelStorage for SledStorageProvider {
     fn upsert_sub_channel(&self, subchannel: &SubChannel) -> Result<(), Error> {
         let serialized = sub_channel::serialize(&subchannel)?;
         self.sub_channel_tree()?
@@ -405,6 +420,126 @@ impl SubChannelStorage for SledStorageProvider {
     }
 }
 
+impl WalletStorage for SledStorageProvider {
+    fn upsert_address(&self, address: &Address, privkey: &SecretKey) -> Result<(), Error> {
+        let db = self.address_tree()?;
+        let key = get_address_key(address);
+        db.insert(key, &privkey.secret_bytes())
+            .map_err(to_storage_error)?;
+        Ok(())
+    }
+
+    fn delete_address(&self, address: &Address) -> Result<(), Error> {
+        let db = self.address_tree()?;
+        let key = get_address_key(address);
+        db.remove(key).map_err(to_storage_error)?;
+        Ok(())
+    }
+
+    fn get_addresses(&self) -> Result<Vec<Address>, Error> {
+        self.address_tree()?
+            .iter()
+            .keys()
+            .map(|x| {
+                Ok(String::from_utf8(x.map_err(to_storage_error)?.to_vec())
+                    .map_err(|e| Error::InvalidState(format!("Could not read address key {}", e)))?
+                    .parse()
+                    .expect("to have a valid address as key"))
+            })
+            .collect::<Result<Vec<Address>, Error>>()
+    }
+
+    fn get_priv_key_for_address(&self, address: &Address) -> Result<Option<SecretKey>, Error> {
+        let db = self.address_tree()?;
+        let key = get_address_key(address);
+        let raw_key = match db.get(key).map_err(to_storage_error)? {
+            Some(res) => res,
+            None => return Ok(None),
+        };
+
+        Ok(Some(
+            SecretKey::from_slice(&raw_key).expect("a valid secret key"),
+        ))
+    }
+
+    fn upsert_key_pair(&self, public_key: &PublicKey, privkey: &SecretKey) -> Result<(), Error> {
+        self.key_pair_tree()?
+            .insert(public_key.serialize(), &privkey.secret_bytes())
+            .map_err(to_storage_error)?;
+        Ok(())
+    }
+
+    fn get_priv_key_for_pubkey(&self, public_key: &PublicKey) -> Result<Option<SecretKey>, Error> {
+        let db = self.key_pair_tree()?;
+        let key = public_key.serialize();
+        let raw_key = match db.get(key).map_err(to_storage_error)? {
+            Some(res) => res,
+            None => return Ok(None),
+        };
+
+        Ok(Some(
+            SecretKey::from_slice(&raw_key).expect("a valid secret key"),
+        ))
+    }
+
+    fn upsert_utxo(&self, utxo: &Utxo) -> Result<(), Error> {
+        let key = get_utxo_key(&utxo.outpoint.txid, utxo.outpoint.vout);
+        let db = self.utxo_tree()?;
+        let mut buf = Vec::new();
+        utxo.write(&mut buf)?;
+        db.insert(key, buf).map_err(to_storage_error)?;
+        Ok(())
+    }
+
+    fn has_utxo(&self, utxo: &Utxo) -> Result<bool, Error> {
+        let key = get_utxo_key(&utxo.outpoint.txid, utxo.outpoint.vout);
+        self.utxo_tree()?
+            .contains_key(key)
+            .map_err(to_storage_error)
+    }
+
+    fn delete_utxo(&self, utxo: &Utxo) -> Result<(), Error> {
+        let key = get_utxo_key(&utxo.outpoint.txid, utxo.outpoint.vout);
+        self.utxo_tree()?.remove(key).map_err(to_storage_error)?;
+        Ok(())
+    }
+
+    fn get_utxos(&self) -> Result<Vec<Utxo>, Error> {
+        self.contract_tree()?
+            .iter()
+            .values()
+            .map(|x| {
+                let ivec = x.map_err(to_storage_error)?;
+                let mut cursor = Cursor::new(&ivec);
+                let res =
+                    Utxo::read(&mut cursor).map_err(|x| Error::InvalidState(format!("{}", x)))?;
+                Ok(res)
+            })
+            .collect::<Result<Vec<Utxo>, Error>>()
+    }
+
+    fn unreserve_utxo(&self, txid: &Txid, vout: u32) -> Result<(), Error> {
+        let utxo_tree = self.utxo_tree()?;
+        let key = get_utxo_key(txid, vout);
+        let mut utxo = match utxo_tree.get(&key).map_err(to_storage_error)? {
+            Some(res) => Utxo::read(&mut Cursor::new(&res))
+                .map_err(|_| Error::InvalidState("Could not read UTXO".to_string()))?,
+            None => {
+                return Err(Error::InvalidState(format!(
+                    "No utxo for {} {}",
+                    txid, vout
+                )))
+            }
+        };
+
+        utxo.reserved = false;
+        let mut buf = Vec::new();
+        utxo.write(&mut buf)?;
+        utxo_tree.insert(key, buf).map_err(to_storage_error)?;
+        Ok(())
+    }
+}
+
 fn insert_contract(
     db: &sled::transaction::TransactionalTree,
     serialized: Vec<u8>,
@@ -418,6 +553,17 @@ fn insert_contract(
     };
 
     db.insert(&contract.get_id(), serialized)
+}
+
+fn get_address_key(address: &Address) -> Vec<u8> {
+    address.to_string().into_bytes()
+}
+
+fn get_utxo_key(txid: &Txid, vout: u32) -> Vec<u8> {
+    let res: Result<Vec<_>, _> = txid.bytes().collect();
+    let mut key = res.expect("a valid txid");
+    key.extend_from_slice(&vout.to_be_bytes());
+    key
 }
 
 macro_rules! serialize_object {
@@ -484,7 +630,8 @@ serialize_object!(
     sub_channel,
     (Offered, OfferedSubChannel),
     (Accepted, AcceptedSubChannel),
-    (Signed, SignedSubChannel)
+    (Signed, SignedSubChannel),
+    (Closing, ClosingSubChannel)
 );
 
 #[cfg(test)]

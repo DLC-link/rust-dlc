@@ -12,7 +12,7 @@ use crate::{
     channel::party_points::PartyBasePoints,
     contract::{contract_info::ContractInfo, AdaptorInfo, FundingInputInfo},
     error::Error,
-    Wallet,
+    Blockchain, Wallet,
 };
 
 const APPROXIMATE_CET_VBYTES: u64 = 190;
@@ -96,14 +96,16 @@ pub(crate) fn compute_id(
     res
 }
 
-pub(crate) fn get_party_params<C: Signing, W: Deref>(
+pub(crate) fn get_party_params<C: Signing, W: Deref, B: Deref>(
     secp: &Secp256k1<C>,
     own_collateral: u64,
     fee_rate: u64,
     wallet: &W,
+    blockchain: &B,
 ) -> Result<(PartyParams, SecretKey, Vec<FundingInputInfo>), Error>
 where
     W::Target: Wallet,
+    B::Target: Blockchain,
 {
     let funding_privkey = wallet.get_new_secret_key()?;
     let funding_pubkey = PublicKey::from_secret_key(secp, &funding_privkey);
@@ -122,7 +124,7 @@ where
     let mut funding_tx_info: Vec<TxInputInfo> = Vec::new();
     let mut total_input = 0;
     for utxo in utxos {
-        let prev_tx = wallet.get_transaction(&utxo.outpoint.txid)?;
+        let prev_tx = blockchain.get_transaction(&utxo.outpoint.txid)?;
         let mut writer = Vec::new();
         prev_tx.consensus_encode(&mut writer)?;
         let prev_tx_vout = utxo.outpoint.vout;

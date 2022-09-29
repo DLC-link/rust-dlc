@@ -1,3 +1,4 @@
+use bitcoin::{Address, OutPoint, Txid};
 use dlc_manager::chain_monitor::ChainMonitor;
 use dlc_manager::channel::{
     offered_channel::OfferedChannel,
@@ -9,7 +10,9 @@ use dlc_manager::contract::{
 };
 use dlc_manager::sub_channel_manager::SubChannel;
 use dlc_manager::Storage;
-use dlc_manager::{error::Error as DaemonError, ChannelId, ContractId};
+use dlc_manager::{error::Error as DaemonError, ChannelId, ContractId, Utxo};
+use secp256k1_zkp::{PublicKey, SecretKey};
+use simple_wallet::WalletStorage;
 use std::collections::HashMap;
 use std::sync::{Mutex, RwLock};
 
@@ -19,6 +22,9 @@ pub struct MemoryStorage {
     sub_channels: RwLock<HashMap<ChannelId, SubChannel>>,
     contracts_saved: Mutex<Option<HashMap<ContractId, Contract>>>,
     channels_saved: Mutex<Option<HashMap<ChannelId, Channel>>>,
+    addresses: RwLock<HashMap<Address, SecretKey>>,
+    utxos: RwLock<HashMap<OutPoint, Utxo>>,
+    key_pairs: RwLock<HashMap<PublicKey, SecretKey>>,
 }
 
 impl MemoryStorage {
@@ -29,6 +35,9 @@ impl MemoryStorage {
             sub_channels: RwLock::new(HashMap::new()),
             contracts_saved: Mutex::new(None),
             channels_saved: Mutex::new(None),
+            addresses: RwLock::new(HashMap::new()),
+            utxos: RwLock::new(HashMap::new()),
+            key_pairs: RwLock::new(HashMap::new()),
         }
     }
 
@@ -249,5 +258,122 @@ impl Storage for MemoryStorage {
     ) -> Result<Option<dlc_manager::sub_channel_manager::SubChannel>, DaemonError> {
         let map = self.sub_channels.read().expect("could not get read lock");
         Ok(map.get(&channel_id).cloned())
+    }
+}
+
+impl WalletStorage for MemoryStorage {
+    fn upsert_address(
+        &self,
+        address: &Address,
+        privkey: &secp256k1_zkp::SecretKey,
+    ) -> Result<(), DaemonError> {
+        self.addresses
+            .write()
+            .expect("Could not get write lock")
+            .insert(address.clone(), *privkey);
+        Ok(())
+    }
+
+    fn delete_address(&self, address: &Address) -> Result<(), DaemonError> {
+        self.addresses
+            .write()
+            .expect("Could not get write lock")
+            .remove(address);
+        Ok(())
+    }
+
+    fn get_addresses(&self) -> Result<Vec<Address>, DaemonError> {
+        Ok(self
+            .addresses
+            .read()
+            .expect("Could not get read lock")
+            .keys()
+            .cloned()
+            .collect())
+    }
+
+    fn get_priv_key_for_address(
+        &self,
+        address: &Address,
+    ) -> Result<Option<secp256k1_zkp::SecretKey>, DaemonError> {
+        Ok(self
+            .addresses
+            .read()
+            .expect("Could not get read lock")
+            .get(address)
+            .cloned())
+    }
+
+    fn upsert_key_pair(
+        &self,
+        public_key: &secp256k1_zkp::PublicKey,
+        privkey: &secp256k1_zkp::SecretKey,
+    ) -> Result<(), DaemonError> {
+        self.key_pairs
+            .write()
+            .expect("Could not get write lock")
+            .insert(public_key.clone(), privkey.clone());
+
+        Ok(())
+    }
+
+    fn get_priv_key_for_pubkey(
+        &self,
+        public_key: &secp256k1_zkp::PublicKey,
+    ) -> Result<Option<secp256k1_zkp::SecretKey>, DaemonError> {
+        Ok(self
+            .key_pairs
+            .read()
+            .expect("Could not get read lock")
+            .get(public_key)
+            .cloned())
+    }
+
+    fn upsert_utxo(&self, utxo: &Utxo) -> Result<(), DaemonError> {
+        self.utxos
+            .write()
+            .expect("Could not get write lock")
+            .insert(utxo.outpoint.clone(), utxo.clone());
+        Ok(())
+    }
+
+    fn has_utxo(&self, utxo: &Utxo) -> Result<bool, DaemonError> {
+        Ok(self
+            .utxos
+            .read()
+            .expect("Could not get read lock")
+            .contains_key(&utxo.outpoint))
+    }
+
+    fn delete_utxo(&self, utxo: &Utxo) -> Result<(), DaemonError> {
+        self.utxos
+            .write()
+            .expect("Could not get write lock")
+            .remove(&utxo.outpoint);
+        Ok(())
+    }
+
+    fn get_utxos(&self) -> Result<Vec<Utxo>, DaemonError> {
+        Ok(self
+            .utxos
+            .read()
+            .expect("Could not get read lock")
+            .values()
+            .cloned()
+            .collect())
+    }
+
+    fn unreserve_utxo(&self, txid: &Txid, vout: u32) -> Result<(), DaemonError> {
+        let outpoint = OutPoint {
+            txid: txid.clone(),
+            vout,
+        };
+        self.utxos
+            .write()
+            .expect("Could not get write lock")
+            .get_mut(&outpoint)
+            .expect("Could not get value")
+            .reserved = false;
+        Ok(())
     }
 }

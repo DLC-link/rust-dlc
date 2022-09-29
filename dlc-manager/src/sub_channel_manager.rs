@@ -366,6 +366,8 @@ pub struct ClosingSubChannel {
     pub signed_sub_channel: SignedSubChannel,
 }
 
+impl_dlc_writeable!(ClosingSubChannel, { (signed_sub_channel, writeable) });
+
 const DLC_CHANNEL_AND_SPLIT_MIN_WEIGHT: usize = dlc::channel::sub_channel::SPLIT_TX_WEIGHT
     + dlc::channel::BUFFER_TX_WEIGHT
     + dlc::channel::CET_EXTRA_WEIGHT
@@ -526,6 +528,7 @@ where
             crate::manager::CET_NSEQUENCE,
             crate::manager::REFUND_DELAY,
             &self.wallet,
+            &self.blockchain,
         )?;
 
         // TODO(tibo): refactor properly.
@@ -748,6 +751,7 @@ where
                 &offered_channel,
                 &offered_contract,
                 &self.wallet,
+                &self.blockchain,
                 Some(sub_channel_info),
             )?;
 
