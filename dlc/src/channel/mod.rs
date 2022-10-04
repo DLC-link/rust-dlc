@@ -336,9 +336,6 @@ pub fn create_renewal_channel_transactions(
         cet_lock_time,
     );
 
-    println!("Fund output value: {}", fund_output.value);
-    println!("Extra fee: {}", extra_fee);
-
     let outpoint = OutPoint {
         txid: buffer_transaction.txid(),
         vout: 0,

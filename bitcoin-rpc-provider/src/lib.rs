@@ -294,7 +294,6 @@ impl Wallet for BitcoinCoreProvider {
 
 impl Blockchain for BitcoinCoreProvider {
     fn send_transaction(&self, transaction: &Transaction) -> Result<(), ManagerError> {
-        println!("SEDNING: {}", transaction.txid());
         use bitcoin::consensus::Encodable;
         use std::fmt::Write;
         let mut writer = Vec::new();
@@ -303,8 +302,6 @@ impl Blockchain for BitcoinCoreProvider {
         for x in writer {
             let _ = write!(&mut serialized, "{:02x}", x).unwrap();
         }
-        println!("{}", serialized);
-        println!("{:?}", transaction.input[0].witness);
         self.client
             .lock()
             .unwrap()
@@ -392,7 +389,7 @@ impl FeeEstimator for BitcoinCoreProvider {
         &self,
         confirmation_target: lightning::chain::chaininterface::ConfirmationTarget,
     ) -> u32 {
-        match confirmation_target {
+        let est = match confirmation_target {
             ConfirmationTarget::Background => self
                 .fees
                 .get(&Target::Background)
@@ -408,7 +405,8 @@ impl FeeEstimator for BitcoinCoreProvider {
                 .get(&Target::HighPriority)
                 .unwrap()
                 .load(Ordering::Acquire),
-        }
+        };
+        est
     }
 }
 

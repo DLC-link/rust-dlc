@@ -13,7 +13,6 @@ use dlc_manager::payout_curve::PayoutFunctionPiece;
 use electrs_blockchain_provider::ElectrsBlockchainProvider;
 use test_utils::*;
 
-use bitcoin_rpc_provider::BitcoinCoreProvider;
 use bitcoin_test_utils::rpc_helpers::init_clients;
 use bitcoincore_rpc::RpcApi;
 use dlc_manager::contract::{numerical_descriptor::DifferenceParams, Contract};
@@ -411,7 +410,7 @@ fn manager_execution_test(test_params: TestParams, path: TestPath) {
     let (sync_send, sync_receive) = channel::<()>();
     let alice_sync_send = sync_send.clone();
     let bob_sync_send = sync_send;
-    let (alice_rpc, bob_rpc, sink_rpc) = init_clients();
+    let (_, _, sink_rpc) = init_clients();
 
     let electrs = Arc::new(ElectrsBlockchainProvider::new(
         "http://localhost:3004/".to_string(),
@@ -428,8 +427,6 @@ fn manager_execution_test(test_params: TestParams, path: TestPath) {
 
     let alice_fund_address = alice_simple_wallet.get_new_address().unwrap();
     let bob_fund_address = bob_simple_wallet.get_new_address().unwrap();
-
-    println!("{}", sink_rpc.get_balance(None, None).unwrap());
 
     sink_rpc
         .send_to_address(
@@ -478,10 +475,6 @@ fn manager_execution_test(test_params: TestParams, path: TestPath) {
     alice_simple_wallet.refresh().unwrap();
     bob_simple_wallet.refresh().unwrap();
 
-    let alice_bitcoin_core = Arc::new(BitcoinCoreProvider::new_from_rpc_client(alice_rpc));
-
-    let bob_bitcoin_core = Arc::new(BitcoinCoreProvider::new_from_rpc_client(bob_rpc));
-
     let mut alice_oracles = HashMap::with_capacity(1);
     let mut bob_oracles = HashMap::with_capacity(1);
 
@@ -501,7 +494,7 @@ fn manager_execution_test(test_params: TestParams, path: TestPath) {
             alice_store.clone(),
             alice_oracles,
             Arc::clone(&mock_time),
-            Arc::clone(&alice_bitcoin_core),
+            Arc::clone(&electrs),
         )
         .unwrap(),
     ));
@@ -516,7 +509,7 @@ fn manager_execution_test(test_params: TestParams, path: TestPath) {
             bob_store.clone(),
             bob_oracles,
             Arc::clone(&mock_time),
-            Arc::clone(&bob_bitcoin_core),
+            Arc::clone(&electrs),
         )
         .unwrap(),
     ));

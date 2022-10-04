@@ -1,10 +1,16 @@
-use bitcoin::consensus::Decodable;
-use bitcoin::{Block, Network, OutPoint, Script, Transaction, TxOut, Txid};
+use bitcoin::consensus::{Decodable, Encodable};
+use bitcoin::hashes::hex::FromHex;
+use bitcoin::util::uint::Uint256;
+use bitcoin::{Block, BlockHash, BlockHeader, Network, OutPoint, Script, Transaction, TxOut, Txid};
 use bitcoin_test_utils::tx_to_string;
 use dlc_manager::{error::Error, Blockchain, Utxo};
+use lightning::chain::chaininterface::{BroadcasterInterface, FeeEstimator};
+use lightning_block_sync::{BlockHeaderData, BlockSource, BlockSourceError};
 use reqwest::blocking::Response;
 use serde::Deserialize;
 use serde::Serialize;
+
+const MIN_FEERATE: u32 = 253;
 
 pub struct ElectrsBlockchainProvider {
     host: String,
@@ -31,6 +37,10 @@ impl ElectrsBlockchainProvider {
                     x,
                 ))
             })
+    }
+
+    async fn get_async(&self, sub_url: &str) -> Result<reqwest::Response, reqwest::Error> {
+        reqwest::get(format!("{}{}", self.host, sub_url)).await
     }
 
     fn get_text(&self, sub_url: &str) -> Result<String, Error> {
@@ -146,6 +156,116 @@ impl simple_wallet::WalletBlockchainProvider for ElectrsBlockchainProvider {
     }
 }
 
+impl FeeEstimator for ElectrsBlockchainProvider {
+    fn get_est_sat_per_1000_weight(
+        &self,
+        confirmation_target: lightning::chain::chaininterface::ConfirmationTarget,
+    ) -> u32 {
+        let fee_rate_per_vb_opt = match self.get_from_json::<FeeEstimates>("fee-estimates") {
+            Ok(fee_estimates) => match confirmation_target {
+                lightning::chain::chaininterface::ConfirmationTarget::Background => {
+                    fee_estimates.get(&144).cloned()
+                }
+                lightning::chain::chaininterface::ConfirmationTarget::Normal => {
+                    fee_estimates.get(&18).cloned()
+                }
+
+                lightning::chain::chaininterface::ConfirmationTarget::HighPriority => {
+                    fee_estimates.get(&6).cloned()
+                }
+            },
+            Err(_) => {
+                //TODO(tibo): return a default value or save previous ones.
+                panic!("Could not get fee estimate");
+            }
+        };
+        if let Some(fee_rate_per_vb) = fee_rate_per_vb_opt {
+            fee_rate_per_vb.ceil() as u32 * 1000 / 4
+        } else {
+            MIN_FEERATE
+        }
+    }
+}
+
+impl BlockSource for ElectrsBlockchainProvider {
+    fn get_header<'a>(
+        &'a self,
+        header_hash: &'a bitcoin::BlockHash,
+        _: Option<u32>,
+    ) -> lightning_block_sync::AsyncBlockSourceResult<'a, lightning_block_sync::BlockHeaderData>
+    {
+        Box::pin(async move {
+            let block_info: BlockInfo = self
+                .get_async(&format!("block/{:x}", header_hash))
+                .await
+                .map_err(|e| BlockSourceError::transient(e))?
+                .json()
+                .await
+                .map_err(|e| BlockSourceError::transient(e))?;
+            let header_hex = self
+                .get_async(&format!("block/{:x}/header", header_hash))
+                .await
+                .map_err(|e| BlockSourceError::transient(e))?
+                .bytes()
+                .await
+                .map_err(|e| BlockSourceError::transient(e))?;
+            let header =
+                BlockHeader::consensus_decode(&*header_hex).expect("to have a valid header");
+            Ok(BlockHeaderData {
+                header,
+                height: block_info.height,
+                // Electrs doesn't seem to make this available.
+                chainwork: Uint256::from_u64(10).unwrap(),
+            })
+        })
+    }
+
+    fn get_block<'a>(
+        &'a self,
+        header_hash: &'a bitcoin::BlockHash,
+    ) -> lightning_block_sync::AsyncBlockSourceResult<'a, Block> {
+        Box::pin(async move {
+            let block_raw = self
+                .get_async(&format!("block/{:x}/raw", header_hash))
+                .await
+                .map_err(|e| BlockSourceError::transient(e))?
+                .bytes()
+                .await
+                .map_err(|e| BlockSourceError::transient(e))?;
+            let block = Block::consensus_decode(&*block_raw).expect("to have a valid header");
+            Ok(block)
+        })
+    }
+
+    fn get_best_block<'a>(
+        &'a self,
+    ) -> lightning_block_sync::AsyncBlockSourceResult<(bitcoin::BlockHash, Option<u32>)> {
+        Box::pin(async move {
+            let block_tip_hash: String = self
+                .get_async("blocks/tip/hash")
+                .await
+                .map_err(|e| BlockSourceError::transient(e))?
+                .text()
+                .await
+                .map_err(|e| BlockSourceError::transient(e))?;
+            Ok((
+                BlockHash::from_hex(&block_tip_hash).map_err(|e| BlockSourceError::transient(e))?,
+                None,
+            ))
+        })
+    }
+}
+
+impl BroadcasterInterface for ElectrsBlockchainProvider {
+    fn broadcast_transaction(&self, tx: &Transaction) {
+        self.client
+            .post(&format!("{}tx", self.host))
+            .body(bitcoin_test_utils::tx_to_string(tx))
+            .send()
+            .unwrap();
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 struct TxStatus {
     confirmed: bool,
@@ -172,4 +292,11 @@ struct UtxoStatus {
 #[derive(Serialize, Deserialize, Debug)]
 struct SpentResp {
     status: bool,
+}
+
+type FeeEstimates = std::collections::HashMap<u16, f32>;
+
+#[derive(Serialize, Deserialize, Debug)]
+struct BlockInfo {
+    height: u32,
 }

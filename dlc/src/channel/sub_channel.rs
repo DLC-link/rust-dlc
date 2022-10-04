@@ -48,7 +48,6 @@ pub fn create_split_tx(
     output_values: &[u64],
 ) -> SplitTx {
     let output_desc = buffer_descriptor(offer_revoke_params, accept_revoke_params);
-    println!("SCRIPT CODE: {:?}", output_desc.script_code());
 
     let output = output_values
         .iter()
