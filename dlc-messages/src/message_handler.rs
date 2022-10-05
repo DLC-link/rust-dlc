@@ -19,6 +19,7 @@ use secp256k1_zkp::PublicKey;
 
 use crate::{
     segmentation::{get_segments, segment_reader::SegmentReader},
+    sub_channel::SubChannelMessage,
     Message, WireMessage,
 };
 
@@ -29,6 +30,7 @@ use crate::{
 pub struct MessageHandler {
     msg_events: Mutex<VecDeque<(PublicKey, WireMessage)>>,
     msg_received: Mutex<Vec<(PublicKey, Message)>>,
+    sub_channel_msg_received: Mutex<Vec<(PublicKey, SubChannelMessage)>>,
     segment_readers: Mutex<HashMap<PublicKey, SegmentReader>>,
 }
 
@@ -44,6 +46,7 @@ impl MessageHandler {
         MessageHandler {
             msg_events: Mutex::new(VecDeque::new()),
             msg_received: Mutex::new(Vec::new()),
+            sub_channel_msg_received: Mutex::new(Vec::new()),
             segment_readers: Mutex::new(HashMap::new()),
         }
     }
@@ -53,6 +56,19 @@ impl MessageHandler {
     pub fn get_and_clear_received_messages(&self) -> Vec<(PublicKey, Message)> {
         let mut ret = Vec::new();
         std::mem::swap(&mut *self.msg_received.lock().unwrap(), &mut ret);
+        ret
+    }
+
+    /// Returns the messages received by the message handler and empty the
+    /// receiving buffer.
+    pub fn get_and_clear_received_sub_channel_messages(
+        &self,
+    ) -> Vec<(PublicKey, SubChannelMessage)> {
+        let mut ret = Vec::new();
+        std::mem::swap(
+            &mut *self.sub_channel_msg_received.lock().unwrap(),
+            &mut ret,
+        );
         ret
     }
 
@@ -72,6 +88,25 @@ impl MessageHandler {
                 .lock()
                 .unwrap()
                 .push_back((node_id, WireMessage::Message(msg)));
+        }
+    }
+
+    /// Send a message to the peer with given node id. Not that the message is not
+    /// sent right away, but only when the LDK
+    /// [`lightning::ln::peer_handler::PeerManager::process_events`] is next called.
+    pub fn send_subchannel_message(&self, node_id: PublicKey, msg: SubChannelMessage) {
+        if msg.serialized_length() > MAX_BUF_SIZE {
+            let (seg_start, seg_chunks) = get_segments(msg.encode(), msg.type_id());
+            let mut msg_events = self.msg_events.lock().unwrap();
+            msg_events.push_back((node_id, WireMessage::SegmentStart(seg_start)));
+            for chunk in seg_chunks {
+                msg_events.push_back((node_id, WireMessage::SegmentChunk(chunk)));
+            }
+        } else {
+            self.msg_events
+                .lock()
+                .unwrap()
+                .push_back((node_id, WireMessage::SubChannel(msg)));
         }
     }
 
@@ -201,6 +236,11 @@ impl CustomMessageHandler for MessageHandler {
                     action: lightning::ln::msgs::ErrorAction::DisconnectPeer { msg: None },
                 });
             }
+            WireMessage::SubChannel(s) => self
+                .sub_channel_msg_received
+                .lock()
+                .unwrap()
+                .push((*org, s)),
         };
         Ok(())
     }

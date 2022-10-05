@@ -1,16 +1,16 @@
 //!
 use std::sync::{Arc, Mutex};
 
-use bitcoin::Script;
+use bitcoin::{Script, Transaction, TxOut};
 use lightning::{
     chain::keysinterface::{
         BaseSign, ExtraSign, InMemorySigner, KeyMaterial, KeysInterface, KeysManager, Recipient,
-        Sign,
+        Sign, SpendableOutputDescriptor,
     },
     ln::{chan_utils::ChannelPublicKeys, msgs::DecodeError, script::ShutdownScript},
     util::ser::Writeable,
 };
-use secp256k1_zkp::{ecdsa::RecoverableSignature, SecretKey};
+use secp256k1_zkp::{ecdsa::RecoverableSignature, Secp256k1, SecretKey, Signing};
 
 ///
 pub struct CustomSigner {
@@ -256,6 +256,26 @@ impl CustomKeysManager {
     ///
     pub fn new(keys_manager: KeysManager) -> Self {
         Self { keys_manager }
+    }
+}
+
+impl CustomKeysManager {
+    ///
+    pub fn spend_spendable_outputs<C: Signing>(
+        &self,
+        descriptors: &[&SpendableOutputDescriptor],
+        outputs: Vec<TxOut>,
+        change_destination_script: Script,
+        feerate_sat_per_1000_weight: u32,
+        secp_ctx: &Secp256k1<C>,
+    ) -> Result<Transaction, ()> {
+        self.keys_manager.spend_spendable_outputs(
+            descriptors,
+            outputs,
+            change_destination_script,
+            feerate_sat_per_1000_weight,
+            secp_ctx,
+        )
     }
 }
 

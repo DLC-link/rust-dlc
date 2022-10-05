@@ -4,11 +4,13 @@
 use bitcoin::Script;
 use secp256k1_zkp::{ecdsa::Signature, EcdsaAdaptorSignature, PublicKey, SecretKey};
 
+use crate::ser_impls::{read_ecdsa_adaptor_signature, write_ecdsa_adaptor_signature};
 use crate::{contract_msgs::ContractInfo, CetAdaptorSignatures};
 use lightning::ln::msgs::DecodeError;
 use lightning::util::ser::{Readable, Writeable, Writer};
 
 ///
+#[derive(Clone, Debug)]
 pub enum SubChannelMessage {
     ///
     Request(SubChannelOffer),
@@ -69,6 +71,28 @@ pub struct SubChannelOffer {
     pub fee_rate_per_vbyte: u64,
 }
 
+impl_dlc_writeable!(
+    SubChannelOffer, {
+    (channel_id, writeable),
+    (revocation_basepoint, writeable),
+    (publish_basepoint, writeable),
+    (own_basepoint, writeable),
+    (next_per_split_point, writeable),
+    (contract_info, writeable),
+    (channel_revocation_basepoint, writeable),
+    (channel_publish_basepoint, writeable),
+    (channel_own_basepoint, writeable),
+    (channel_first_per_update_point, writeable),
+    (payout_spk, writeable),
+    (payout_serial_id, writeable),
+    (offer_collateral, writeable),
+    (cet_locktime, writeable),
+    (refund_locktime, writeable),
+    (cet_nsequence, writeable),
+    (fee_rate_per_vbyte, writeable)
+    }
+);
+
 #[derive(Clone, Eq, PartialEq, Debug)]
 #[cfg_attr(
     feature = "serde",
@@ -86,6 +110,7 @@ pub struct SubChannelInfo {
 impl_dlc_writeable!(SubChannelInfo, {(sender_satoshi, writeable), (receiver_satoshi, writeable)});
 
 ///
+#[derive(Debug, Clone)]
 pub struct SubChannelAccept {
     ///
     pub channel_id: [u8; 32],
@@ -130,7 +155,31 @@ pub struct SubChannelAccept {
     pub payout_serial_id: u64,
 }
 
+impl_dlc_writeable!(
+    SubChannelAccept, {
+    (channel_id, writeable),
+    (revocation_basepoint, writeable),
+    (publish_basepoint, writeable),
+    (own_basepoint, writeable),
+    (split_adaptor_signature, {cb_writeable, write_ecdsa_adaptor_signature, read_ecdsa_adaptor_signature}),
+    (commit_signature, writeable),
+    (htlc_signatures, writeable),
+    (first_per_split_point, writeable),
+    (channel_revocation_basepoint, writeable),
+    (channel_publish_basepoint, writeable),
+    (channel_own_basepoint, writeable),
+    (cet_adaptor_signatures, writeable),
+    (buffer_adaptor_signature,  {cb_writeable, write_ecdsa_adaptor_signature, read_ecdsa_adaptor_signature}),
+    (refund_signature, writeable),
+    (ln_glue_signature, writeable),
+    (first_per_update_point, writeable),
+    (payout_spk, writeable),
+    (payout_serial_id, writeable)
+    }
+);
+
 ///
+#[derive(Clone, Debug)]
 pub struct SubChannelConfirm {
     ///
     pub channel_id: [u8; 32],
@@ -155,7 +204,21 @@ pub struct SubChannelConfirm {
     pub ln_glue_signature: Signature,
 }
 
+impl_dlc_writeable!(SubChannelConfirm, {
+    (channel_id, writeable),
+    (per_split_secret, writeable),
+    (next_per_commitment_point, writeable),
+    (split_adaptor_signature, {cb_writeable, write_ecdsa_adaptor_signature, read_ecdsa_adaptor_signature}),
+    (commit_signature, writeable),
+    (htlc_signatures, writeable),
+    (cet_adaptor_signatures, writeable),
+    (buffer_adaptor_signature, {cb_writeable, write_ecdsa_adaptor_signature, read_ecdsa_adaptor_signature}),
+    (refund_signature, writeable),
+    (ln_glue_signature, writeable)
+});
+
 ///
+#[derive(Clone, Debug)]
 pub struct SubChannelFinalize {
     ///
     pub channel_id: [u8; 32],
@@ -164,3 +227,10 @@ pub struct SubChannelFinalize {
     ///
     pub next_per_commitment_point: PublicKey,
 }
+
+impl_dlc_writeable!(SubChannelFinalize, {
+    (channel_id, writeable),
+    (per_split_secret, writeable),
+    (next_per_commitment_point, writeable)
+
+});
