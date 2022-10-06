@@ -462,7 +462,7 @@ where
 {
     ///
     pub fn on_sub_channel_message(
-        &mut self,
+        &self,
         msg: &SubChannelMessage,
         sender: &PublicKey,
     ) -> Result<Option<SubChannelMessage>, Error> {
@@ -488,7 +488,7 @@ where
 
     ///
     pub fn offer_sub_channel(
-        &mut self,
+        &self,
         channel_id: &[u8; 32],
         contract_input: &ContractInput,
         oracle_announcements: &[Vec<OracleAnnouncement>],
@@ -579,7 +579,7 @@ where
 
     ///
     pub fn accept_sub_channel(
-        &mut self,
+        &self,
         channel_id: &ChannelId,
     ) -> Result<(PublicKey, SubChannelAccept), Error> {
         let offered_sub_channel =
@@ -817,10 +817,7 @@ where
     }
 
     ///
-    pub fn initiate_force_close_sub_channels(
-        &mut self,
-        channel_id: &ChannelId,
-    ) -> Result<(), Error> {
+    pub fn initiate_force_close_sub_channels(&self, channel_id: &ChannelId) -> Result<(), Error> {
         let signed = get_sub_channel_in_state!(self, *channel_id, Signed, None::<PublicKey>)?;
 
         let channel_details = self
@@ -909,10 +906,7 @@ where
     }
 
     ///
-    pub fn finalize_force_close_sub_channels(
-        &mut self,
-        channel_id: &ChannelId,
-    ) -> Result<(), Error> {
+    pub fn finalize_force_close_sub_channels(&self, channel_id: &ChannelId) -> Result<(), Error> {
         let closing = get_sub_channel_in_state!(self, *channel_id, Closing, None::<PublicKey>)?;
         let signed_sub_channel = &closing.signed_sub_channel;
         let counter_party = closing.signed_sub_channel.counter_party;
@@ -977,7 +971,7 @@ where
     }
 
     fn on_subchannel_offer(
-        &mut self,
+        &self,
         sub_channel_offer: &SubChannelOffer,
         counter_party: &PublicKey,
     ) -> Result<(), Error> {
@@ -1053,7 +1047,7 @@ where
     }
 
     fn on_subchannel_accept(
-        &mut self,
+        &self,
         sub_channel_accept: &SubChannelAccept,
         counter_party: &PublicKey,
     ) -> Result<SubChannelConfirm, Error> {
@@ -1329,7 +1323,7 @@ where
     }
 
     fn on_subchannel_confirm(
-        &mut self,
+        &self,
         sub_channel_confirm: &SubChannelConfirm,
         counter_party: &PublicKey,
     ) -> Result<SubChannelFinalize, Error> {
@@ -1473,7 +1467,7 @@ where
     }
 
     fn on_sub_channel_finalize(
-        &mut self,
+        &self,
         sub_channel_finalize: &SubChannelFinalize,
         counter_party: &PublicKey,
     ) -> Result<(), Error> {

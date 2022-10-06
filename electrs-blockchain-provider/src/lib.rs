@@ -1,4 +1,4 @@
-use bitcoin::consensus::{Decodable, Encodable};
+use bitcoin::consensus::Decodable;
 use bitcoin::hashes::hex::FromHex;
 use bitcoin::util::uint::Uint256;
 use bitcoin::{Block, BlockHash, BlockHeader, Network, OutPoint, Script, Transaction, TxOut, Txid};
@@ -248,9 +248,18 @@ impl BlockSource for ElectrsBlockchainProvider {
                 .text()
                 .await
                 .map_err(|e| BlockSourceError::transient(e))?;
+            let block_tip_height: u32 = self
+                .get_async("blocks/tip/height")
+                .await
+                .map_err(|e| BlockSourceError::transient(e))?
+                .text()
+                .await
+                .map_err(|e| BlockSourceError::transient(e))?
+                .parse()
+                .map_err(|e| BlockSourceError::transient(e))?;
             Ok((
                 BlockHash::from_hex(&block_tip_hash).map_err(|e| BlockSourceError::transient(e))?,
-                None,
+                Some(block_tip_height),
             ))
         })
     }
