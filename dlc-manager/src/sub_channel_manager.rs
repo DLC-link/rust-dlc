@@ -581,7 +581,7 @@ where
     pub fn accept_sub_channel(
         &mut self,
         channel_id: &ChannelId,
-    ) -> Result<SubChannelAccept, Error> {
+    ) -> Result<(PublicKey, SubChannelAccept), Error> {
         let offered_sub_channel =
             get_sub_channel_in_state!(self, *channel_id, Offered, None as Option<PublicKey>)?;
 
@@ -813,7 +813,7 @@ where
             Some(Contract::Accepted(accepted_contract)),
         )?;
 
-        Ok(msg)
+        Ok((offered_sub_channel.counter_party, msg))
     }
 
     ///

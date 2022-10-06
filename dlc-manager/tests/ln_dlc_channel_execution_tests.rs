@@ -664,7 +664,7 @@ fn ln_dlc_test(test_path: TestPath) {
             &alice_node.channel_manager.get_our_node_id(),
         )
         .unwrap();
-    let accept = bob_node
+    let (_, accept) = bob_node
         .sub_channel_manager
         .accept_sub_channel(&channel_id)
         .unwrap();
