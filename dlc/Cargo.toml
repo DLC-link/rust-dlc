@@ -4,7 +4,7 @@ description = "Creation, signing and verification of Discreet Log Contracts (DLC
 homepage = "https://github.com/p2pderivatives/rust-dlc"
 license-file = "../LICENSE"
 name = "dlc"
-repository = "https://github.com/p2pderivatives/rust-dlc/tree/master/dlc"
+repository = "https://github.com/dlc-link/rust-dlc/tree/master/dlc"
 version = "0.2.2"
 
 [dependencies]

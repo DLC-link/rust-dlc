@@ -5,7 +5,7 @@ edition = "2018"
 homepage = "https://github.com/p2pderivatives/rust-dlc"
 license-file = "../LICENSE"
 name = "dlc-manager"
-repository = "https://github.com/p2pderivatives/rust-dlc/tree/master/dlc-manager"
+repository = "https://github.com/dlc-link/rust-dlc/tree/master/dlc-manager"
 version = "0.2.2"
 
 [features]
