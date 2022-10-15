@@ -302,6 +302,7 @@ fn verify_helper<T: Iterator<Item = TrieIterInfo>>(
 ) -> Result<usize, Error> {
     let mut max_adaptor_index = 0;
     for x in trie_info {
+        println!("x.paths {:?}", x.paths);
         let adaptor_point =
             utils::get_adaptor_point_for_indexed_paths(&x.indexes, &x.paths, precomputed_points)?;
         let adaptor_sig = adaptor_sigs[x.value.adaptor_index];
@@ -334,6 +335,7 @@ fn verify_helper<T: Iterator<Item = TrieIterInfo>>(
     trie_info: T,
 ) -> Result<usize, Error> {
     let trie_info: Vec<TrieIterInfo> = trie_info.collect();
+    trie_info.iter().for_each(|x| println!("{:?}", x.paths));
     let max_adaptor_index = trie_info
         .iter()
         .max_by(|x, y| x.value.adaptor_index.cmp(&y.value.adaptor_index))
