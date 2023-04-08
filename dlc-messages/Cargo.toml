@@ -1,3 +1,5 @@
+cargo-features = ["per-package-target"]
+
 [package]
 authors = ["Crypto Garage"]
 description = "Structs and serialization for the Discreet Log Contract (DLC) protocol."
@@ -6,6 +8,9 @@ license-file = "../LICENSE"
 name = "dlc-messages"
 repository = "https://github.com/p2pderivatives/rust-dlc/tree/master/dlc-messages"
 version = "0.4.0"
+
+[lib]
+crate-type = ["cdylib"]
 
 [features]
 use-serde = ["serde", "secp256k1-zkp/use-serde"]

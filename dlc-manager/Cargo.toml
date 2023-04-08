@@ -1,3 +1,5 @@
+cargo-features = ["per-package-target"]
+
 [package]
 authors = ["Crypto Garage"]
 description = "Creation and handling of Discrete Log Contracts (DLC)."
@@ -7,6 +9,9 @@ license-file = "../LICENSE"
 name = "dlc-manager"
 repository = "https://github.com/p2pderivatives/rust-dlc/tree/master/dlc-manager"
 version = "0.4.0"
+
+[lib]
+crate-type = ["cdylib"]
 
 [features]
 fuzztarget = ["rand_chacha"]
@@ -19,6 +24,7 @@ bitcoin = {version = "0.29.2"}
 dlc = {version = "0.4.0", path = "../dlc"}
 dlc-messages = {version = "0.4.0", path = "../dlc-messages"}
 dlc-trie = {version = "0.4.0", path = "../dlc-trie"}
+getrandom = { version = "0.2", features = ["js"] } # Perhaps this should be in the calling application, rather than here.
 lightning = {version = "0.0.113"}
 log = "0.4.14"
 rand_chacha = {version = "0.3.1", optional = true}
