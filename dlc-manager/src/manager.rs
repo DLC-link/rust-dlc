@@ -37,6 +37,12 @@ use std::collections::HashMap;
 use std::ops::Deref;
 use std::string::ToString;
 
+macro_rules! clog {
+    ( $( $t:tt )* ) => {
+        web_sys::console::log_1(&format!( $( $t )* ).into());
+    }
+}
+
 /// The options used to configure the DLC manager.
 pub struct ManagerOptions {
     /// The number of btc confirmations required before moving the DLC to the confirmed state.
@@ -223,6 +229,7 @@ where
     ) -> Result<Option<DlcMessage>, Error> {
         match msg {
             DlcMessage::Offer(o) => {
+                clog!("Received offer message from {}", counter_party);
                 self.on_offer_message(o, counter_party)?;
                 Ok(None)
             }
@@ -360,14 +367,17 @@ where
         offered_message: &OfferDlc,
         counter_party: PublicKey,
     ) -> Result<(), Error> {
+        clog!("on_offer_message pre validate");
         offered_message.validate(
             &self.secp,
             self.options.refund_delay,
             self.options.refund_delay * 2,
         )?;
+        clog!("on_offer_message post validate");
         let contract: OfferedContract =
             OfferedContract::try_from_offer_dlc(offered_message, counter_party)?;
         contract.validate()?;
+        clog!("on_offer_message post contract validate");
 
         if self.store.get_contract(&contract.id)?.is_some() {
             return Err(Error::InvalidParameters(

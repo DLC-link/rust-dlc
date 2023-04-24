@@ -53,6 +53,12 @@ use secp256k1_zkp::Verification;
 use secp256k1_zkp::{ecdsa::Signature, EcdsaAdaptorSignature, PublicKey, Secp256k1};
 use segmentation::{SegmentChunk, SegmentStart};
 
+macro_rules! clog {
+    ( $( $t:tt )* ) => {
+        web_sys::console::log_1(&format!( $( $t )* ).into());
+    }
+}
+
 macro_rules! impl_type {
     ($const_name: ident, $type_name: ident, $type_val: expr) => {
         /// The type prefix for an [`$type_name`] message.
@@ -361,6 +367,11 @@ impl OfferDlc {
         min_timeout_interval: u32,
         max_timeout_interval: u32,
     ) -> Result<(), Error> {
+        clog!(
+            "starting validate: {} {}",
+            min_timeout_interval,
+            max_timeout_interval
+        );
         match &self.contract_info {
             ContractInfo::SingleContractInfo(s) => s.contract_info.oracle_info.validate(secp)?,
             ContractInfo::DisjointContractInfo(d) => {
@@ -373,6 +384,7 @@ impl OfferDlc {
                 }
             }
         }
+        clog!("validated oracle_info");
 
         let closest_maturity_date = self.contract_info.get_closest_maturity_date();
         let valid_dates = self.cet_locktime <= closest_maturity_date

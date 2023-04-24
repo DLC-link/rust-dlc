@@ -18,6 +18,12 @@ pub const ANNOUNCEMENT_TYPE: u16 = 55332;
 /// The type of the attestation struct.
 pub const ATTESTATION_TYPE: u16 = 55400;
 
+macro_rules! clog {
+    ( $( $t:tt )* ) => {
+        web_sys::console::log_1(&format!( $( $t )* ).into());
+    }
+}
+
 #[derive(Clone, Eq, PartialEq, Debug)]
 #[cfg_attr(
     feature = "serde",
@@ -60,6 +66,7 @@ impl OracleInfo {
 
     /// Checks that the info satisfies the validity conditions.
     pub fn validate<C: Verification>(&self, secp: &Secp256k1<C>) -> Result<(), Error> {
+        clog!("inside validating oracle info");
         match self {
             OracleInfo::Single(s) => s.oracle_announcement.validate(secp)?,
             OracleInfo::Multi(m) => {
@@ -168,13 +175,22 @@ impl Type for OracleAnnouncement {
 impl OracleAnnouncement {
     /// Returns whether the announcement satisfy validity checks.
     pub fn validate<C: Verification>(&self, secp: &Secp256k1<C>) -> Result<(), Error> {
+        clog!("validating announcement");
         let mut event_hex = Vec::new();
         self.oracle_event
             .write(&mut event_hex)
             .expect("Error writing oracle event");
 
+        clog!("blah blah ");
         let msg = Message::from_hashed_data::<secp256k1_zkp::hashes::sha256::Hash>(&event_hex);
+        clog!(
+            "verifying schnorr -- {} -- {} -- {}",
+            self.announcement_signature,
+            msg,
+            self.oracle_public_key
+        );
         secp.verify_schnorr(&self.announcement_signature, &msg, &self.oracle_public_key)?;
+        clog!(" done with schnorr, verifying oracle event");
         self.oracle_event.validate()
     }
 }
