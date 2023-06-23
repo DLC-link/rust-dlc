@@ -36,6 +36,7 @@ pub mod manager;
 pub mod payout_curve;
 mod utils;
 
+use bdk::blockchain::EsploraBlockchain;
 use bitcoin::{Address, Block, OutPoint, Script, Transaction, TxOut, Txid};
 use chain_monitor::ChainMonitor;
 use channel::offered_channel::OfferedChannel;
@@ -123,6 +124,35 @@ pub trait Blockchain {
     /// Get the number of confirmation for the transaction with given id.
     fn get_transaction_confirmations(&self, tx_id: &Txid) -> Result<u32, Error>;
 }
+
+impl Blockchain for EsploraBlockchain {
+    fn send_transaction(&self, transaction: &Transaction) -> Result<(), Error> {
+        todo!()
+    }
+
+    fn get_network(&self) -> Result<bitcoin::network::constants::Network, Error> {
+        todo!()
+    }
+
+    fn get_blockchain_height(&self) -> Result<u64, Error> {
+        todo!()
+    }
+
+    fn get_block_at_height(&self, height: u64) -> Result<Block, Error> {
+        todo!()
+    }
+
+    fn get_transaction(&self, tx_id: &Txid) -> Result<Transaction, Error> {
+        todo!()
+    }
+
+    fn get_transaction_confirmations(&self, tx_id: &Txid) -> Result<u32, Error> {
+        todo!()
+    }
+}
+
+/// Do stuff - Can I use this DlcEsploraBlockchain thing in the WasmWallet code?
+pub type DlcEsploraBlockchain = EsploraBlockchain;
 
 /// Storage trait provides functionalities to store and retrieve DLCs.
 pub trait Storage {
