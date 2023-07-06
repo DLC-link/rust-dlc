@@ -249,7 +249,7 @@ where
             })
             .collect::<Vec<_>>();
         println!("utxos: {:?}", utxos);
-        let coin_selection = LargestFirstCoinSelection::default();
+        let coin_selection = BranchAndBoundCoinSelection::default();
         let dummy_pubkey: PublicKey =
             "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
                 .parse()
