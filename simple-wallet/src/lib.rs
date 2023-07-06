@@ -2,7 +2,7 @@ use std::ops::Deref;
 
 use bdk::{
     database::{BatchOperations, Database},
-    wallet::coin_selection::{BranchAndBoundCoinSelection, CoinSelectionAlgorithm},
+    wallet::coin_selection::{BranchAndBoundCoinSelection, CoinSelectionAlgorithm, LargestFirstCoinSelection},
     FeeRate, KeychainKind, LocalUtxo, Utxo as BdkUtxo, WeightedUtxo,
 };
 use bitcoin::{
@@ -232,6 +232,9 @@ where
         lock_utxos: bool,
     ) -> Result<Vec<Utxo>> {
         let org_utxos = self.storage.get_utxos()?;
+        println!("amount: {:?}", amount);
+        println!("fee_rate: {:?}", fee_rate);
+        println!("org_utxos: {:?}", org_utxos);
         let utxos = org_utxos
             .iter()
             .filter(|x| !x.reserved)
@@ -245,7 +248,8 @@ where
                 satisfaction_weight: 107,
             })
             .collect::<Vec<_>>();
-        let coin_selection = BranchAndBoundCoinSelection::default();
+        println!("utxos: {:?}", utxos);
+        let coin_selection = LargestFirstCoinSelection::default();
         let dummy_pubkey: PublicKey =
             "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
                 .parse()
@@ -255,7 +259,9 @@ where
         let fee_rate = FeeRate::from_sat_per_vb(fee_rate.unwrap() as f32);
         let selection = coin_selection
             .coin_select(self, Vec::new(), utxos, fee_rate, amount, &dummy_drain)
-            .map_err(|e| Error::WalletError(Box::new(e)))?;
+            .unwrap();
+            // .map_err(|e| Error::WalletError(Box::new(e)))?;
+        println!("selection: {:?}", selection);
         let mut res = Vec::new();
         for utxo in selection.selected {
             let local_utxo = if let BdkUtxo::Local(l) = utxo {

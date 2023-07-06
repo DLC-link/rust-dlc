@@ -2,7 +2,7 @@
 use std::ops::Deref;
 
 use bitcoin::{consensus::Encodable, Txid};
-use dlc::{PartyParams, TxInputInfo};
+use dlc::{PartyParams, TxInputInfo, util::weight_to_fee};
 use dlc_messages::{
     oracle_msgs::{OracleAnnouncement, OracleAttestation},
     FundingInput,
@@ -80,9 +80,13 @@ where
     let change_spk = change_addr.script_pubkey();
     let change_serial_id = get_new_serial_id();
 
+    println!("own_collateral: {:?}", own_collateral);
+println!("half_common_fee: {:?}", get_half_common_fee(fee_rate));
+println!("weight_to_fee: {:?}", weight_to_fee(124, fee_rate));
     // Add base cost of fund tx + CET / 2 and a CET output to the collateral.
     let appr_required_amount =
         own_collateral + get_half_common_fee(fee_rate)? + dlc::util::weight_to_fee(124, fee_rate)?;
+        println!("appr_required_amount: {:?}", appr_required_amount);
     let utxos = wallet.get_utxos_for_amount(appr_required_amount, Some(fee_rate), true)?;
 
     let mut funding_inputs_info: Vec<FundingInputInfo> = Vec::new();
