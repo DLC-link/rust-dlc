@@ -2,7 +2,7 @@ use std::ops::Deref;
 
 use bdk::{
     database::{BatchOperations, Database},
-    wallet::coin_selection::{BranchAndBoundCoinSelection, CoinSelectionAlgorithm, LargestFirstCoinSelection},
+    wallet::coin_selection::{BranchAndBoundCoinSelection, CoinSelectionAlgorithm},
     FeeRate, KeychainKind, LocalUtxo, Utxo as BdkUtxo, WeightedUtxo,
 };
 use bitcoin::{

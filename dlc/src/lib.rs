@@ -20,22 +20,46 @@ extern crate secp256k1_zkp;
 #[cfg(feature = "serde")]
 extern crate serde;
 
+/// The `clog` macro is used to log messages to the browser console using the `web_sys::console::log_1` function.
+/// The macro takes a variable number of arguments, which are passed to the `format!` macro to create a formatted string.
+#[macro_export]
+macro_rules! clog {
+    ($($t:tt)*) => {
+        web_sys::console::log_1(&format!( $( $t )* ).into());
+    };
+}
+
+fn log_message<T>(key: &str, value: T) where T: std::fmt::Debug {
+    #[cfg(target_arch = "wasm32")]
+    clog!("{} {:?}", key, value);
+    #[cfg(not(target_arch = "wasm32"))]
+    println!("{} {:?}", key, value);
+}
+
 use bitcoin::secp256k1::Scalar;
 use bitcoin::{
     blockdata::{
         opcodes,
-        script::{Builder, Script},
-        transaction::{OutPoint, Transaction, TxIn, TxOut},
+        script::{ Builder, Script },
+        transaction::{ OutPoint, Transaction, TxIn, TxOut },
     },
-    PackedLockTime, Sequence, Witness,
+    PackedLockTime,
+    Sequence,
+    Witness,
 };
 use secp256k1_zkp::schnorr::Signature as SchnorrSignature;
 use secp256k1_zkp::{
-    ecdsa::Signature, EcdsaAdaptorSignature, Message, PublicKey, Secp256k1, SecretKey,
-    Verification, XOnlyPublicKey,
+    ecdsa::Signature,
+    EcdsaAdaptorSignature,
+    Message,
+    PublicKey,
+    Secp256k1,
+    SecretKey,
+    Verification,
+    XOnlyPublicKey,
 };
 #[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
+use serde::{ Deserialize, Serialize };
 use std::fmt;
 
 pub mod channel;
@@ -68,13 +92,13 @@ const TX_INPUT_BASE_WEIGHT: usize = 164;
 pub const P2WPKH_WITNESS_SIZE: usize = 107;
 
 macro_rules! checked_add {
-    ($a: expr, $b: expr) => {
+    ($a:expr, $b:expr) => {
         $a.checked_add($b).ok_or(Error::InvalidArgument)
     };
-    ($a: expr, $b: expr, $c: expr) => {
+    ($a:expr, $b:expr, $c:expr) => {
         checked_add!(checked_add!($a, $b)?, $c)
     };
-    ($a: expr, $b: expr, $c: expr, $d: expr) => {
+    ($a:expr, $b:expr, $c:expr, $d:expr) => {
         checked_add!(checked_add!($a, $b, $c)?, $d)
     };
 }
@@ -132,27 +156,19 @@ impl DlcTransactions {
     /// Get the fund output in the fund transaction
     pub fn get_fund_output(&self) -> &TxOut {
         let v0_witness_fund_script = self.funding_script_pubkey.to_v0_p2wsh();
-        util::get_output_for_script_pubkey(&self.fund, &v0_witness_fund_script)
-            .unwrap()
-            .1
+        util::get_output_for_script_pubkey(&self.fund, &v0_witness_fund_script).unwrap().1
     }
 
     /// Get the fund output in the fund transaction
     pub fn get_fund_output_index(&self) -> usize {
         let v0_witness_fund_script = self.funding_script_pubkey.to_v0_p2wsh();
-        util::get_output_for_script_pubkey(&self.fund, &v0_witness_fund_script)
-            .unwrap()
-            .0
+        util::get_output_for_script_pubkey(&self.fund, &v0_witness_fund_script).unwrap().0
     }
 }
 
 /// Contains info about a utxo used for funding a DLC contract
 #[derive(Clone, Debug)]
-#[cfg_attr(
-    feature = "serde",
-    derive(Serialize, Deserialize),
-    serde(rename_all = "camelCase")
-)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(rename_all = "camelCase"))]
 pub struct TxInputInfo {
     /// The outpoint for the utxo
     pub outpoint: OutPoint,
@@ -237,11 +253,7 @@ impl std::error::Error for Error {
 /// party. Specifically these are the common fields between Offer and Accept
 /// messages.
 #[derive(Clone, Debug)]
-#[cfg_attr(
-    feature = "serde",
-    derive(Serialize, Deserialize),
-    serde(rename_all = "camelCase")
-)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(rename_all = "camelCase"))]
 pub struct PartyParams {
     /// The public key for the fund multisig script
     pub fund_pubkey: PublicKey,
@@ -270,12 +282,15 @@ impl PartyParams {
     pub(crate) fn get_change_output_and_fees(
         &self,
         fee_rate_per_vb: u64,
-        extra_fee: u64,
+        extra_fee: u64
     ) -> Result<(TxOut, u64, u64), Error> {
         let mut inputs_weight: usize = 0;
 
+        log_message("self.input_amount:", self.input_amount);
+
         for w in &self.inputs {
-            let script_weight = util::redeem_script_to_script_sig(&w.redeem_script)
+            let script_weight = util
+                ::redeem_script_to_script_sig(&w.redeem_script)
                 .len()
                 .checked_mul(4)
                 .ok_or(Error::InvalidArgument)?;
@@ -294,7 +309,7 @@ impl PartyParams {
 
         // Base weight (nLocktime, nVersion, ...) is distributed among parties
         // independently of inputs contributed
-        let this_party_fund_base_weight = FUND_TX_BASE_WEIGHT / 2;
+        let this_party_fund_base_weight = FUND_TX_BASE_WEIGHT;
 
         let total_fund_weight = checked_add!(
             this_party_fund_base_weight,
@@ -306,18 +321,24 @@ impl PartyParams {
 
         // Base weight (nLocktime, nVersion, funding input ...) is distributed
         // among parties independently of output types
-        let this_party_cet_base_weight = CET_BASE_WEIGHT / 2;
+        let this_party_cet_base_weight = CET_BASE_WEIGHT;
 
         // size of the payout script pubkey scaled by 4 from vBytes to weight units
-        let output_spk_weight = self
-            .payout_script_pubkey
+        let output_spk_weight = self.payout_script_pubkey
             .len()
             .checked_mul(4)
             .ok_or(Error::InvalidArgument)?;
         let total_cet_weight = checked_add!(this_party_cet_base_weight, output_spk_weight)?;
         let cet_or_refund_fee = util::weight_to_fee(total_cet_weight, fee_rate_per_vb)?;
-        let required_input_funds =
-            checked_add!(self.collateral, fund_fee, cet_or_refund_fee, extra_fee)?;
+        let required_input_funds: u64 = if self.collateral == 0 {
+            0
+        } else {
+            checked_add!(self.collateral, fund_fee, cet_or_refund_fee, extra_fee)?
+        };
+
+        log_message("input_amount:", self.input_amount);
+        log_message("required_input_funds:", required_input_funds);
+
         if self.input_amount < required_input_funds {
             return Err(Error::InvalidArgument);
         }
@@ -327,7 +348,11 @@ impl PartyParams {
             script_pubkey: self.change_script_pubkey.clone(),
         };
 
-        Ok((change_output, fund_fee, cet_or_refund_fee))
+        if fee_rate_per_vb == 0 {
+            Ok((change_output, 0, 0))
+        } else {
+            Ok((change_output, fund_fee, cet_or_refund_fee))
+        }
     }
 
     fn get_unsigned_tx_inputs_and_serial_ids(&self, sequence: Sequence) -> (Vec<TxIn>, Vec<u64>) {
@@ -358,7 +383,7 @@ pub fn create_dlc_transactions(
     fee_rate_per_vb: u64,
     fund_lock_time: u32,
     cet_lock_time: u32,
-    fund_output_serial_id: u64,
+    fund_output_serial_id: u64
 ) -> Result<DlcTransactions, Error> {
     let (fund_tx, funding_script_pubkey) = create_fund_transaction_with_fees(
         offer_params,
@@ -366,13 +391,13 @@ pub fn create_dlc_transactions(
         fee_rate_per_vb,
         fund_lock_time,
         fund_output_serial_id,
-        0,
+        0
     )?;
     let fund_outpoint = OutPoint {
         txid: fund_tx.txid(),
-        vout: util::get_output_for_script_pubkey(&fund_tx, &funding_script_pubkey.to_v0_p2wsh())
-            .expect("to find the funding script pubkey")
-            .0 as u32,
+        vout: util
+            ::get_output_for_script_pubkey(&fund_tx, &funding_script_pubkey.to_v0_p2wsh())
+            .expect("to find the funding script pubkey").0 as u32,
     };
     let (cets, refund_tx) = create_cets_and_refund_tx(
         offer_params,
@@ -381,7 +406,7 @@ pub fn create_dlc_transactions(
         payouts,
         refund_lock_time,
         cet_lock_time,
-        None,
+        None
     )?;
 
     Ok(DlcTransactions {
@@ -398,35 +423,43 @@ pub(crate) fn create_fund_transaction_with_fees(
     fee_rate_per_vb: u64,
     fund_lock_time: u32,
     fund_output_serial_id: u64,
-    extra_fee: u64,
+    extra_fee: u64
 ) -> Result<(Transaction, Script), Error> {
     let total_collateral = checked_add!(offer_params.collateral, accept_params.collateral)?;
 
     let (offer_change_output, offer_fund_fee, offer_cet_fee) =
-        offer_params.get_change_output_and_fees(fee_rate_per_vb, extra_fee)?;
+        offer_params.get_change_output_and_fees(0, extra_fee)?;
     let (accept_change_output, accept_fund_fee, accept_cet_fee) =
         accept_params.get_change_output_and_fees(fee_rate_per_vb, extra_fee)?;
 
-    let fund_output_value = checked_add!(offer_params.input_amount, accept_params.input_amount)?
-        - offer_change_output.value
-        - accept_change_output.value
-        - offer_fund_fee
-        - accept_fund_fee
-        - extra_fee;
+    log_message("offer_params.input_amount:", offer_params.input_amount);
+    log_message("accept_params.input_amount:", accept_params.input_amount);
 
-    assert_eq!(
-        total_collateral + offer_cet_fee + accept_cet_fee + extra_fee,
-        fund_output_value
-    );
+    log_message("total_collateral:", total_collateral);
+    log_message("offer_cet_fee:", offer_cet_fee);
+    log_message("accept_cet_fee", accept_cet_fee);
+    log_message("extra_fee:", extra_fee);
+
+    let fund_output_value =
+        checked_add!(offer_params.input_amount, accept_params.input_amount)? -
+        offer_change_output.value -
+        accept_change_output.value -
+        offer_fund_fee -
+        accept_fund_fee -
+        extra_fee;
+
+    log_message("fund_output_value:", fund_output_value);
+
+    assert_eq!(total_collateral + offer_cet_fee + accept_cet_fee + extra_fee, fund_output_value);
 
     assert_eq!(
         offer_params.input_amount + accept_params.input_amount,
-        fund_output_value
-            + offer_change_output.value
-            + accept_change_output.value
-            + offer_fund_fee
-            + accept_fund_fee
-            + extra_fee
+        fund_output_value +
+            offer_change_output.value +
+            accept_change_output.value +
+            offer_fund_fee +
+            accept_fund_fee +
+            extra_fee
     );
 
     let fund_sequence = util::get_sequence(fund_lock_time);
@@ -435,8 +468,10 @@ pub(crate) fn create_fund_transaction_with_fees(
     let (accept_tx_ins, accept_inputs_serial_ids) =
         accept_params.get_unsigned_tx_inputs_and_serial_ids(fund_sequence);
 
-    let funding_script_pubkey =
-        make_funding_redeemscript(&offer_params.fund_pubkey, &accept_params.fund_pubkey);
+    let funding_script_pubkey = make_funding_redeemscript(
+        &offer_params.fund_pubkey,
+        &accept_params.fund_pubkey
+    );
 
     let fund_tx = create_funding_transaction(
         &funding_script_pubkey,
@@ -450,7 +485,7 @@ pub(crate) fn create_fund_transaction_with_fees(
         accept_change_output,
         accept_params.change_serial_id,
         fund_output_serial_id,
-        fund_lock_time,
+        fund_lock_time
     );
 
     Ok((fund_tx, funding_script_pubkey))
@@ -463,7 +498,7 @@ pub(crate) fn create_cets_and_refund_tx(
     payouts: &[Payout],
     refund_lock_time: u32,
     cet_lock_time: u32,
-    cet_nsequence: Option<Sequence>,
+    cet_nsequence: Option<Sequence>
 ) -> Result<(Vec<Transaction>, Transaction), Error> {
     let total_collateral = checked_add!(offer_params.collateral, accept_params.collateral)?;
 
@@ -494,7 +529,7 @@ pub(crate) fn create_cets_and_refund_tx(
         &accept_params.payout_script_pubkey,
         accept_params.payout_serial_id,
         payouts,
-        cet_lock_time,
+        cet_lock_time
     );
 
     let offer_refund_output = TxOut {
@@ -518,7 +553,7 @@ pub(crate) fn create_cets_and_refund_tx(
         offer_refund_output,
         accept_refund_ouput,
         refund_input,
-        refund_lock_time,
+        refund_lock_time
     );
 
     Ok((cets, refund_tx))
@@ -531,7 +566,7 @@ pub fn create_cet(
     accept_output: TxOut,
     accept_payout_serial_id: u64,
     fund_tx_in: &TxIn,
-    lock_time: u32,
+    lock_time: u32
 ) -> Transaction {
     let mut output: Vec<TxOut> = if offer_payout_serial_id < accept_payout_serial_id {
         vec![offer_output, accept_output]
@@ -557,7 +592,7 @@ pub fn create_cets(
     accept_payout_script_pubkey: &Script,
     accept_payout_serial_id: u64,
     payouts: &[Payout],
-    lock_time: u32,
+    lock_time: u32
 ) -> Vec<Transaction> {
     let mut txs: Vec<Transaction> = Vec::new();
     for payout in payouts {
@@ -575,7 +610,7 @@ pub fn create_cets(
             accept_output,
             accept_payout_serial_id,
             fund_tx_input,
-            lock_time,
+            lock_time
         );
 
         txs.push(tx);
@@ -597,7 +632,7 @@ pub fn create_funding_transaction(
     accept_change_output: TxOut,
     accept_change_serial_id: u64,
     fund_output_serial_id: u64,
-    lock_time: u32,
+    lock_time: u32
 ) -> Transaction {
     let fund_tx_out = TxOut {
         value: output_amount,
@@ -608,20 +643,20 @@ pub fn create_funding_transaction(
         let serial_ids = vec![
             fund_output_serial_id,
             offer_change_serial_id,
-            accept_change_serial_id,
+            accept_change_serial_id
         ];
         util::discard_dust(
             util::order_by_serial_ids(
                 vec![fund_tx_out, offer_change_output, accept_change_output],
-                &serial_ids,
+                &serial_ids
             ),
-            DUST_LIMIT,
+            DUST_LIMIT
         )
     };
 
     let input = util::order_by_serial_ids(
         [offer_inputs, accept_inputs].concat(),
-        &[offer_inputs_serial_ids, accept_inputs_serial_ids].concat(),
+        &[offer_inputs_serial_ids, accept_inputs_serial_ids].concat()
     );
 
     Transaction {
@@ -637,7 +672,7 @@ pub fn create_refund_transaction(
     offer_output: TxOut,
     accept_output: TxOut,
     funding_input: TxIn,
-    locktime: u32,
+    locktime: u32
 ) -> Transaction {
     let output = util::discard_dust(vec![offer_output, accept_output], DUST_LIMIT);
     Transaction {
@@ -664,30 +699,27 @@ pub fn make_funding_redeemscript(a: &PublicKey, b: &PublicKey) -> Script {
 fn get_oracle_sig_point<C: secp256k1_zkp::Verification>(
     secp: &Secp256k1<C>,
     oracle_info: &OracleInfo,
-    msgs: &[Message],
+    msgs: &[Message]
 ) -> Result<PublicKey, Error> {
     if oracle_info.nonces.len() < msgs.len() {
         return Err(Error::InvalidArgument);
     }
 
-    let sig_points: Vec<PublicKey> = oracle_info
-        .nonces
+    let sig_points: Vec<PublicKey> = oracle_info.nonces
         .iter()
         .zip(msgs.iter())
         .map(|(nonce, msg)| {
             secp_utils::schnorrsig_compute_sig_point(secp, &oracle_info.public_key, nonce, msg)
         })
         .collect::<Result<Vec<PublicKey>, Error>>()?;
-    Ok(PublicKey::combine_keys(
-        &sig_points.iter().collect::<Vec<_>>(),
-    )?)
+    Ok(PublicKey::combine_keys(&sig_points.iter().collect::<Vec<_>>())?)
 }
 
 /// Get an adaptor point generated using the given oracle information and messages.
 pub fn get_adaptor_point_from_oracle_info<C: Verification>(
     secp: &Secp256k1<C>,
     oracle_infos: &[OracleInfo],
-    msgs: &[Vec<Message>],
+    msgs: &[Vec<Message>]
 ) -> Result<PublicKey, Error> {
     if oracle_infos.is_empty() || msgs.is_empty() {
         return Err(Error::InvalidArgument);
@@ -697,9 +729,7 @@ pub fn get_adaptor_point_from_oracle_info<C: Verification>(
     for (i, info) in oracle_infos.iter().enumerate() {
         oracle_sigpoints.push(get_oracle_sig_point(secp, info, &msgs[i])?);
     }
-    Ok(PublicKey::combine_keys(
-        &oracle_sigpoints.iter().collect::<Vec<_>>(),
-    )?)
+    Ok(PublicKey::combine_keys(&oracle_sigpoints.iter().collect::<Vec<_>>())?)
 }
 
 /// Create an adaptor signature for the given cet using the provided adaptor point.
@@ -709,16 +739,11 @@ pub fn create_cet_adaptor_sig_from_point<C: secp256k1_zkp::Signing>(
     adaptor_point: &PublicKey,
     funding_sk: &SecretKey,
     funding_script_pubkey: &Script,
-    fund_output_value: u64,
+    fund_output_value: u64
 ) -> Result<EcdsaAdaptorSignature, Error> {
     let sig_hash = util::get_sig_hash_msg(cet, 0, funding_script_pubkey, fund_output_value)?;
 
-    Ok(secp256k1_zkp::EcdsaAdaptorSignature::encrypt(
-        secp,
-        &sig_hash,
-        funding_sk,
-        adaptor_point,
-    ))
+    Ok(secp256k1_zkp::EcdsaAdaptorSignature::encrypt(secp, &sig_hash, funding_sk, adaptor_point))
 }
 
 /// Create an adaptor signature for the given cet using the provided oracle infos.
@@ -729,7 +754,7 @@ pub fn create_cet_adaptor_sig_from_oracle_info(
     funding_sk: &SecretKey,
     funding_script_pubkey: &Script,
     fund_output_value: u64,
-    msgs: &[Vec<Message>],
+    msgs: &[Vec<Message>]
 ) -> Result<EcdsaAdaptorSignature, Error> {
     let adaptor_point = get_adaptor_point_from_oracle_info(secp, oracle_infos, msgs)?;
     create_cet_adaptor_sig_from_point(
@@ -738,7 +763,7 @@ pub fn create_cet_adaptor_sig_from_oracle_info(
         &adaptor_point,
         funding_sk,
         funding_script_pubkey,
-        fund_output_value,
+        fund_output_value
     )
 }
 
@@ -748,7 +773,7 @@ pub fn create_cet_adaptor_sigs_from_points<C: secp256k1_zkp::Signing>(
     inputs: &[(&Transaction, &PublicKey)],
     funding_sk: &SecretKey,
     funding_script_pubkey: &Script,
-    fund_output_value: u64,
+    fund_output_value: u64
 ) -> Result<Vec<EcdsaAdaptorSignature>, Error> {
     inputs
         .iter()
@@ -759,7 +784,7 @@ pub fn create_cet_adaptor_sigs_from_points<C: secp256k1_zkp::Signing>(
                 adaptor_point,
                 funding_sk,
                 funding_script_pubkey,
-                fund_output_value,
+                fund_output_value
             )
         })
         .collect()
@@ -773,7 +798,7 @@ pub fn create_cet_adaptor_sigs_from_oracle_info(
     funding_sk: &SecretKey,
     funding_script_pubkey: &Script,
     fund_output_value: u64,
-    msgs: &[Vec<Vec<Message>>],
+    msgs: &[Vec<Vec<Message>>]
 ) -> Result<Vec<EcdsaAdaptorSignature>, Error> {
     if msgs.len() != cets.len() {
         return Err(Error::InvalidArgument);
@@ -789,7 +814,7 @@ pub fn create_cet_adaptor_sigs_from_oracle_info(
                 funding_sk,
                 funding_script_pubkey,
                 fund_output_value,
-                msg,
+                msg
             )
         })
         .collect()
@@ -799,17 +824,22 @@ fn signatures_to_secret(signatures: &[Vec<SchnorrSignature>]) -> Result<SecretKe
     let s_values = signatures
         .iter()
         .flatten()
-        .map(|x| match secp_utils::schnorrsig_decompose(x) {
-            Ok(v) => Ok(v.1),
-            Err(err) => Err(err),
+        .map(|x| {
+            match secp_utils::schnorrsig_decompose(x) {
+                Ok(v) => Ok(v.1),
+                Err(err) => Err(err),
+            }
         })
         .collect::<Result<Vec<&[u8]>, Error>>()?;
     let secret = SecretKey::from_slice(s_values[0])?;
 
-    let result = s_values.iter().skip(1).fold(secret, |accum, s| {
-        let sec = SecretKey::from_slice(s).unwrap();
-        accum.add_tweak(&Scalar::from(sec)).unwrap()
-    });
+    let result = s_values
+        .iter()
+        .skip(1)
+        .fold(secret, |accum, s| {
+            let sec = SecretKey::from_slice(s).unwrap();
+            accum.add_tweak(&Scalar::from(sec)).unwrap()
+        });
 
     Ok(result)
 }
@@ -825,7 +855,7 @@ pub fn sign_cet<C: secp256k1_zkp::Signing>(
     funding_sk: &SecretKey,
     other_pk: &PublicKey,
     funding_script_pubkey: &Script,
-    fund_output_value: u64,
+    fund_output_value: u64
 ) -> Result<(), Error> {
     let adaptor_secret = signatures_to_secret(oracle_signatures)?;
     let adapted_sig = adaptor_signature.decrypt(&adaptor_secret)?;
@@ -838,7 +868,7 @@ pub fn sign_cet<C: secp256k1_zkp::Signing>(
         funding_sk,
         funding_script_pubkey,
         fund_output_value,
-        0,
+        0
     )?;
 
     Ok(())
@@ -853,7 +883,7 @@ pub fn verify_cet_adaptor_sig_from_point(
     adaptor_point: &PublicKey,
     pubkey: &PublicKey,
     funding_script_pubkey: &Script,
-    total_collateral: u64,
+    total_collateral: u64
 ) -> Result<(), Error> {
     let sig_hash = util::get_sig_hash_msg(cet, 0, funding_script_pubkey, total_collateral)?;
     adaptor_sig.verify(secp, &sig_hash, pubkey, adaptor_point)?;
@@ -870,7 +900,7 @@ pub fn verify_cet_adaptor_sig_from_oracle_info(
     pubkey: &PublicKey,
     funding_script_pubkey: &Script,
     total_collateral: u64,
-    msgs: &[Vec<Message>],
+    msgs: &[Vec<Message>]
 ) -> Result<(), Error> {
     let adaptor_point = get_adaptor_point_from_oracle_info(secp, oracle_infos, msgs)?;
     verify_cet_adaptor_sig_from_point(
@@ -880,7 +910,7 @@ pub fn verify_cet_adaptor_sig_from_oracle_info(
         &adaptor_point,
         pubkey,
         funding_script_pubkey,
-        total_collateral,
+        total_collateral
     )
 }
 
@@ -892,7 +922,7 @@ pub fn verify_tx_input_sig<V: Verification>(
     input_index: usize,
     script_pubkey: &Script,
     value: u64,
-    pk: &PublicKey,
+    pk: &PublicKey
 ) -> Result<(), Error> {
     let sig_hash_msg = util::get_sig_hash_msg(tx, input_index, script_pubkey, value)?;
     secp.verify_ecdsa(&sig_hash_msg, signature, pk)?;
@@ -903,13 +933,17 @@ pub fn verify_tx_input_sig<V: Verification>(
 mod tests {
     use super::*;
     use bitcoin::blockdata::script::Script;
-    use bitcoin::blockdata::transaction::{EcdsaSighashType, OutPoint};
+    use bitcoin::blockdata::transaction::{ EcdsaSighashType, OutPoint };
     use bitcoin::consensus::encode::Encodable;
     use bitcoin::hashes::hex::FromHex;
-    use bitcoin::{network::constants::Network, Address, Txid};
+    use bitcoin::{ network::constants::Network, Address, Txid };
     use secp256k1_zkp::{
-        rand::{Rng, RngCore},
-        KeyPair, PublicKey, Secp256k1, SecretKey, Signing,
+        rand::{ Rng, RngCore },
+        KeyPair,
+        PublicKey,
+        Secp256k1,
+        SecretKey,
+        Signing,
     };
     use std::fmt::Write;
     use std::str::FromStr;
@@ -929,9 +963,9 @@ mod tests {
 
     fn create_multi_party_pub_keys() -> (PublicKey, PublicKey) {
         let secp = Secp256k1::new();
-        let secret_key =
-            SecretKey::from_str("0000000000000000000000000000000000000000000000000000000000000001")
-                .unwrap();
+        let secret_key = SecretKey::from_str(
+            "0000000000000000000000000000000000000000000000000000000000000001"
+        ).unwrap();
         let pk = PublicKey::from_secret_key(&secp, &secret_key);
         let pk1 = pk;
 
@@ -1004,7 +1038,7 @@ mod tests {
             accept_change_output,
             1,
             0,
-            0,
+            0
         );
 
         assert_eq!(transaction.input[0].sequence.0, 0);
@@ -1049,7 +1083,7 @@ mod tests {
             accept_change_output,
             1,
             0,
-            0,
+            0
         );
 
         assert_eq!(transaction.output[0].value, total_collateral);
@@ -1062,10 +1096,12 @@ mod tests {
         let input_amount = 5000000000;
         let change = 4899999719;
         let total_collateral = 200000312;
-        let offer_change_address =
-            Address::from_str("bcrt1qlgmznucxpdkp5k3ktsct7eh6qrc4tju7ktjukn").unwrap();
-        let accept_change_address =
-            Address::from_str("bcrt1qvh2dvgjctwh4z5w7sc93u7h4sug0yrdz2lgpqf").unwrap();
+        let offer_change_address = Address::from_str(
+            "bcrt1qlgmznucxpdkp5k3ktsct7eh6qrc4tju7ktjukn"
+        ).unwrap();
+        let accept_change_address = Address::from_str(
+            "bcrt1qvh2dvgjctwh4z5w7sc93u7h4sug0yrdz2lgpqf"
+        ).unwrap();
 
         let offer_change_output = TxOut {
             value: change,
@@ -1080,9 +1116,8 @@ mod tests {
         let offer_input = TxIn {
             previous_output: OutPoint {
                 txid: Txid::from_str(
-                    "83266d6b22a9babf6ee469b88fd0d3a0c690525f7c903aff22ec8ee44214604f",
-                )
-                .unwrap(),
+                    "83266d6b22a9babf6ee469b88fd0d3a0c690525f7c903aff22ec8ee44214604f"
+                ).unwrap(),
                 vout: 0,
             },
             script_sig: Script::new(),
@@ -1093,34 +1128,36 @@ mod tests {
         let accept_input = TxIn {
             previous_output: OutPoint {
                 txid: Txid::from_str(
-                    "bc92a22f07ef23c53af343397874b59f5f8c0eb37753af1d1a159a2177d4bb98",
-                )
-                .unwrap(),
+                    "bc92a22f07ef23c53af343397874b59f5f8c0eb37753af1d1a159a2177d4bb98"
+                ).unwrap(),
                 vout: 0,
             },
             script_sig: Script::new(),
             sequence: Sequence(0xffffffff),
             witness: Witness::from_vec(vec![Script::new().to_bytes()]),
         };
-        let offer_fund_sk =
-            SecretKey::from_str("0000000000000000000000000000000000000000000000000000000000000001")
-                .unwrap();
+        let offer_fund_sk = SecretKey::from_str(
+            "0000000000000000000000000000000000000000000000000000000000000001"
+        ).unwrap();
         let offer_fund_pubkey = PublicKey::from_secret_key(&secp, &offer_fund_sk);
-        let accept_fund_sk =
-            SecretKey::from_str("0000000000000000000000000000000000000000000000000000000000000002")
-                .unwrap();
+        let accept_fund_sk = SecretKey::from_str(
+            "0000000000000000000000000000000000000000000000000000000000000002"
+        ).unwrap();
         let accept_fund_pubkey = PublicKey::from_secret_key(&secp, &accept_fund_sk);
-        let offer_input_sk =
-            SecretKey::from_str("0000000000000000000000000000000000000000000000000000000000000005")
-                .unwrap();
-        let accept_input_sk =
-            SecretKey::from_str("0000000000000000000000000000000000000000000000000000000000000006")
-                .unwrap();
+        let offer_input_sk = SecretKey::from_str(
+            "0000000000000000000000000000000000000000000000000000000000000005"
+        ).unwrap();
+        let accept_input_sk = SecretKey::from_str(
+            "0000000000000000000000000000000000000000000000000000000000000006"
+        ).unwrap();
 
-        let expected_serialized = "020000000001024F601442E48EEC22FF3A907C5F5290C6A0D3D08FB869E46EBFBAA9226B6D26830000000000FFFFFFFF98BBD477219A151A1DAF5377B30E8C5F9FB574783943F33AC523EF072FA292BC0000000000FFFFFFFF0338C3EB0B000000002200209B984C7BAE3EFDDC3A3F0A20FF81BFE89ED1FE07FF13E562149EE654BED845DBE70F102401000000160014FA3629F3060B6C1A5A365C30BF66FA00F155CB9EE70F10240100000016001465D4D622585BAF5151DE860B1E7AF58710F20DA20247304402207108DE1563AE311F8D4217E1C0C7463386C1A135BE6AF88CBE8D89A3A08D65090220195A2B0140FB9BA83F20CF45AD6EA088BB0C6860C0D4995F1CF1353739CA65A90121022F8BDE4D1A07209355B4A7250A5C5128E88B84BDDC619AB7CBA8D569B240EFE4024730440220048716EAEE918AEBCB1BFCFAF7564E78293A7BB0164D9A7844E42FCEB5AE393C022022817D033C9DB19C5BDCADD49B7587A810B6FC2264158A59665ABA8AB298455B012103FFF97BD5755EEEA420453A14355235D382F6472F8568A18B2F057A146029755600000000";
+        let expected_serialized =
+            "020000000001024F601442E48EEC22FF3A907C5F5290C6A0D3D08FB869E46EBFBAA9226B6D26830000000000FFFFFFFF98BBD477219A151A1DAF5377B30E8C5F9FB574783943F33AC523EF072FA292BC0000000000FFFFFFFF0338C3EB0B000000002200209B984C7BAE3EFDDC3A3F0A20FF81BFE89ED1FE07FF13E562149EE654BED845DBE70F102401000000160014FA3629F3060B6C1A5A365C30BF66FA00F155CB9EE70F10240100000016001465D4D622585BAF5151DE860B1E7AF58710F20DA20247304402207108DE1563AE311F8D4217E1C0C7463386C1A135BE6AF88CBE8D89A3A08D65090220195A2B0140FB9BA83F20CF45AD6EA088BB0C6860C0D4995F1CF1353739CA65A90121022F8BDE4D1A07209355B4A7250A5C5128E88B84BDDC619AB7CBA8D569B240EFE4024730440220048716EAEE918AEBCB1BFCFAF7564E78293A7BB0164D9A7844E42FCEB5AE393C022022817D033C9DB19C5BDCADD49B7587A810B6FC2264158A59665ABA8AB298455B012103FFF97BD5755EEEA420453A14355235D382F6472F8568A18B2F057A146029755600000000";
 
-        let funding_script_pubkey =
-            make_funding_redeemscript(&offer_fund_pubkey, &accept_fund_pubkey);
+        let funding_script_pubkey = make_funding_redeemscript(
+            &offer_fund_pubkey,
+            &accept_fund_pubkey
+        );
 
         let mut fund_tx = create_funding_transaction(
             &funding_script_pubkey,
@@ -1134,7 +1171,7 @@ mod tests {
             accept_change_output,
             1,
             0,
-            0,
+            0
         );
 
         util::sign_p2wpkh_input(
@@ -1143,9 +1180,8 @@ mod tests {
             &mut fund_tx,
             0,
             EcdsaSighashType::All,
-            input_amount,
-        )
-        .expect("to be able to sign the input.");
+            input_amount
+        ).expect("to be able to sign the input.");
 
         util::sign_p2wpkh_input(
             &secp,
@@ -1153,9 +1189,8 @@ mod tests {
             &mut fund_tx,
             1,
             EcdsaSighashType::All,
-            input_amount,
-        )
-        .expect("to be able to sign the input.");
+            input_amount
+        ).expect("to be able to sign the input.");
 
         let mut writer = Vec::new();
         fund_tx.consensus_encode(&mut writer).unwrap();
@@ -1169,7 +1204,7 @@ mod tests {
 
     fn get_p2wpkh_script_pubkey<C: Signing, R: Rng + ?Sized>(
         secp: &Secp256k1<C>,
-        rng: &mut R,
+        rng: &mut R
     ) -> Script {
         let sk = bitcoin::PrivateKey {
             inner: SecretKey::new(rng),
@@ -1177,15 +1212,13 @@ mod tests {
             compressed: true,
         };
         let pk = bitcoin::PublicKey::from_private_key(secp, &sk);
-        Address::p2wpkh(&pk, Network::Testnet)
-            .unwrap()
-            .script_pubkey()
+        Address::p2wpkh(&pk, Network::Testnet).unwrap().script_pubkey()
     }
 
     fn get_party_params(
         input_amount: u64,
         collateral: u64,
-        serial_id: Option<u64>,
+        serial_id: Option<u64>
     ) -> (PartyParams, SecretKey) {
         let secp = Secp256k1::new();
         let mut rng = secp256k1_zkp::rand::thread_rng();
@@ -1205,9 +1238,8 @@ mod tests {
                     redeem_script: Script::new(),
                     outpoint: OutPoint {
                         txid: Txid::from_hex(
-                            "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456",
-                        )
-                        .unwrap(),
+                            "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456"
+                        ).unwrap(),
                         vout: serial_id as u32,
                     },
                     serial_id,
@@ -1226,7 +1258,7 @@ mod tests {
             Payout {
                 offer: 0,
                 accept: 200000000,
-            },
+            }
         ]
     }
 
@@ -1237,8 +1269,9 @@ mod tests {
 
         // Act
 
-        let (change_out, fund_fee, cet_fee) =
-            party_params.get_change_output_and_fees(4, 0).unwrap();
+        let (change_out, fund_fee, cet_fee) = party_params
+            .get_change_output_and_fees(4, 0)
+            .unwrap();
 
         // Assert
         assert!(change_out.value > 0 && fund_fee > 0 && cet_fee > 0);
@@ -1271,9 +1304,8 @@ mod tests {
             4,
             10,
             10,
-            0,
-        )
-        .unwrap();
+            0
+        ).unwrap();
 
         // Assert
         assert_eq!(10, dlc_txs.fund.lock_time.0);
@@ -1297,9 +1329,8 @@ mod tests {
             4,
             10,
             10,
-            0,
-        )
-        .unwrap();
+            0
+        ).unwrap();
 
         let cets = dlc_txs.cets;
         const NB_ORACLES: usize = 3;
@@ -1315,9 +1346,9 @@ mod tests {
                     .map(|y| {
                         (0..NB_DIGITS)
                             .map(|z| {
-                                Message::from_hashed_data::<secp256k1_zkp::hashes::sha256::Hash>(&[
-                                    ((y + x + z) as u8),
-                                ])
+                                Message::from_hashed_data::<secp256k1_zkp::hashes::sha256::Hash>(
+                                    &[(y + x + z) as u8]
+                                )
                             })
                             .collect()
                     })
@@ -1340,7 +1371,7 @@ mod tests {
                     &secp,
                     &messages[0][i][j],
                     &oracle_kp,
-                    &sk_nonce,
+                    &sk_nonce
                 );
                 oracle_sigs[i].push(sig);
                 nonces.push(nonce);
@@ -1356,7 +1387,7 @@ mod tests {
 
         let funding_script_pubkey = make_funding_redeemscript(
             &offer_party_params.fund_pubkey,
-            &accept_party_params.fund_pubkey,
+            &accept_party_params.fund_pubkey
         );
         let fund_output_value = dlc_txs.fund.output[0].value;
 
@@ -1368,9 +1399,8 @@ mod tests {
             &offer_fund_sk,
             &funding_script_pubkey,
             fund_output_value,
-            &messages,
-        )
-        .unwrap();
+            &messages
+        ).unwrap();
 
         let sign_res = sign_cet(
             &secp,
@@ -1380,27 +1410,30 @@ mod tests {
             &accept_fund_sk,
             &offer_party_params.fund_pubkey,
             &funding_script_pubkey,
-            fund_output_value,
+            fund_output_value
         );
 
         let adaptor_secret = signatures_to_secret(&oracle_sigs).unwrap();
         let adapted_sig = cet_sigs[0].decrypt(&adaptor_secret).unwrap();
 
         // Assert
-        assert!(cet_sigs
-            .iter()
-            .enumerate()
-            .all(|(i, x)| verify_cet_adaptor_sig_from_oracle_info(
-                &secp,
-                x,
-                &cets[i],
-                &oracle_infos,
-                &offer_party_params.fund_pubkey,
-                &funding_script_pubkey,
-                fund_output_value,
-                &messages[i],
-            )
-            .is_ok()));
+        assert!(
+            cet_sigs
+                .iter()
+                .enumerate()
+                .all(|(i, x)|
+                    verify_cet_adaptor_sig_from_oracle_info(
+                        &secp,
+                        x,
+                        &cets[i],
+                        &oracle_infos,
+                        &offer_party_params.fund_pubkey,
+                        &funding_script_pubkey,
+                        fund_output_value,
+                        &messages[i]
+                    ).is_ok()
+                )
+        );
         sign_res.expect("Error signing CET");
         verify_tx_input_sig(
             &secp,
@@ -1409,9 +1442,8 @@ mod tests {
             0,
             &funding_script_pubkey,
             fund_output_value,
-            &offer_party_params.fund_pubkey,
-        )
-        .expect("Invalid decrypted adaptor signature");
+            &offer_party_params.fund_pubkey
+        ).expect("Invalid decrypted adaptor signature");
     }
 
     #[test]
@@ -1447,69 +1479,77 @@ mod tests {
                 expected_input_order: [1, 0],
                 expected_fund_output_order: [2, 1, 0],
                 expected_payout_order: [1, 0],
-            },
+            }
         ];
 
         for case in cases {
-            let (offer_party_params, _) =
-                get_party_params(1000000000, 100000000, Some(case.serials[1]));
-            let (accept_party_params, _) =
-                get_party_params(1000000000, 100000000, Some(case.serials[2]));
+            let (offer_party_params, _) = get_party_params(
+                1000000000,
+                100000000,
+                Some(case.serials[1])
+            );
+            let (accept_party_params, _) = get_party_params(
+                1000000000,
+                100000000,
+                Some(case.serials[2])
+            );
 
             let dlc_txs = create_dlc_transactions(
                 &offer_party_params,
                 &accept_party_params,
-                &[Payout {
-                    offer: 100000000,
-                    accept: 100000000,
-                }],
+                &[
+                    Payout {
+                        offer: 100000000,
+                        accept: 100000000,
+                    },
+                ],
                 100,
                 4,
                 10,
                 10,
-                case.serials[0],
-            )
-            .unwrap();
+                case.serials[0]
+            ).unwrap();
 
             // Check that fund inputs are in correct order
             assert!(
-                dlc_txs.fund.input[case.expected_input_order[0]].previous_output
-                    == offer_party_params.inputs[0].outpoint
+                dlc_txs.fund.input[case.expected_input_order[0]].previous_output ==
+                    offer_party_params.inputs[0].outpoint
             );
             assert!(
-                dlc_txs.fund.input[case.expected_input_order[1]].previous_output
-                    == accept_party_params.inputs[0].outpoint
+                dlc_txs.fund.input[case.expected_input_order[1]].previous_output ==
+                    accept_party_params.inputs[0].outpoint
             );
 
             // Check that fund output are in correct order
             assert!(
-                dlc_txs.fund.output[case.expected_fund_output_order[0]].script_pubkey
-                    == dlc_txs.funding_script_pubkey.to_v0_p2wsh()
+                dlc_txs.fund.output[case.expected_fund_output_order[0]].script_pubkey ==
+                    dlc_txs.funding_script_pubkey.to_v0_p2wsh()
             );
             assert!(
-                dlc_txs.fund.output[case.expected_fund_output_order[1]].script_pubkey
-                    == offer_party_params.change_script_pubkey
+                dlc_txs.fund.output[case.expected_fund_output_order[1]].script_pubkey ==
+                    offer_party_params.change_script_pubkey
             );
             assert!(
-                dlc_txs.fund.output[case.expected_fund_output_order[2]].script_pubkey
-                    == accept_party_params.change_script_pubkey
+                dlc_txs.fund.output[case.expected_fund_output_order[2]].script_pubkey ==
+                    accept_party_params.change_script_pubkey
             );
 
             // Check payout output ordering
             assert!(
-                dlc_txs.cets[0].output[case.expected_payout_order[0]].script_pubkey
-                    == offer_party_params.payout_script_pubkey
+                dlc_txs.cets[0].output[case.expected_payout_order[0]].script_pubkey ==
+                    offer_party_params.payout_script_pubkey
             );
             assert!(
-                dlc_txs.cets[0].output[case.expected_payout_order[1]].script_pubkey
-                    == accept_party_params.payout_script_pubkey
+                dlc_txs.cets[0].output[case.expected_payout_order[1]].script_pubkey ==
+                    accept_party_params.payout_script_pubkey
             );
 
-            crate::util::get_output_for_script_pubkey(
-                &dlc_txs.fund,
-                &dlc_txs.funding_script_pubkey.to_v0_p2wsh(),
-            )
-            .expect("Could not find fund output");
+            crate::util
+                ::get_output_for_script_pubkey(
+                    &dlc_txs.fund,
+                    &dlc_txs.funding_script_pubkey.to_v0_p2wsh()
+                )
+                .expect("Could not find fund output");
         }
     }
 }
