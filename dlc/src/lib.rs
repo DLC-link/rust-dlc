@@ -277,6 +277,8 @@ impl PartyParams {
     ) -> Result<(TxOut, u64, u64), Error> {
         let mut inputs_weight: usize = 0;
 
+        println!("fee_rate_per_vb: {}", fee_rate_per_vb);
+
         for w in &self.inputs {
             let script_weight = util::redeem_script_to_script_sig(&w.redeem_script)
                 .len()
@@ -311,6 +313,8 @@ impl PartyParams {
         )?;
         let fund_fee = util::weight_to_fee(total_fund_weight, fee_rate_per_vb)?;
 
+        println!("fund_fee: {}", fund_fee);
+
         // Base weight (nLocktime, nVersion, funding input ...) is distributed
         // among parties independently of output types
         let this_party_cet_base_weight = CET_BASE_WEIGHT;
@@ -331,6 +335,9 @@ impl PartyParams {
             checked_add!(self.collateral, fund_fee, cet_or_refund_fee, extra_fee)?
         };
 
+        println!("required_input_funds: {}", required_input_funds);
+        println!("input_amount: {}", self.input_amount);
+
         if self.input_amount < required_input_funds {
             return Err(Error::InvalidArgument(format!("[get_change_output_and_fees] error: input amount is lower than the sum of the collateral plus the required fees => input_amount: {}, collateral: {}, fund fee: {}, cet_or_refund_fee: {}, extra_fee: {}", self.input_amount, self.collateral, fund_fee, cet_or_refund_fee, extra_fee)));
         }
@@ -341,6 +348,7 @@ impl PartyParams {
         };
 
         if fee_rate_per_vb == 0 {
+            println!("fee_rate_per_vb is 0, returning 0 fees");
             Ok((change_output, 0, 0))
         } else {
             Ok((change_output, fund_fee, cet_or_refund_fee))
