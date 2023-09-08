@@ -1,0 +1,518 @@
+diff --git a/dlc-manager/Cargo.toml b/dlc-manager/Cargo.toml
+index 3bbd99d..54b662e 100644
+--- a/dlc-manager/Cargo.toml
++++ b/dlc-manager/Cargo.toml
+@@ -44,3 +44,10 @@ simple-wallet = {path = "../simple-wallet"}
+ [[bench]]
+ harness = false
+ name = "benchmarks"
++
++
++[dependencies.web-sys]
++version = "0.3"
++features = [
++  "console",
++]
+diff --git a/dlc-manager/src/utils.rs b/dlc-manager/src/utils.rs
+index 6066a76..083c510 100644
+--- a/dlc-manager/src/utils.rs
++++ b/dlc-manager/src/utils.rs
+@@ -1,24 +1,37 @@
+ //! #Utils
+ use std::ops::Deref;
+ 
+-use bitcoin::{consensus::Encodable, Txid};
+-use dlc::{PartyParams, TxInputInfo};
+-use dlc_messages::{
+-    oracle_msgs::{OracleAnnouncement, OracleAttestation},
+-    FundingInput,
+-};
++use bitcoin::{ consensus::Encodable, Txid };
++use dlc::{ PartyParams, TxInputInfo };
++use dlc_messages::{ oracle_msgs::{ OracleAnnouncement, OracleAttestation }, FundingInput };
+ use dlc_trie::RangeInfo;
+ #[cfg(not(feature = "fuzztarget"))]
+-use secp256k1_zkp::rand::{thread_rng, Rng, RngCore};
+-use secp256k1_zkp::{PublicKey, Secp256k1, SecretKey, Signing};
+-
++use secp256k1_zkp::rand::{ thread_rng, Rng, RngCore };
++use secp256k1_zkp::{ PublicKey, Secp256k1, SecretKey, Signing };
+ use crate::{
+     channel::party_points::PartyBasePoints,
+-    contract::{contract_info::ContractInfo, AdaptorInfo, FundingInputInfo},
++    contract::{ contract_info::ContractInfo, AdaptorInfo, FundingInputInfo },
+     error::Error,
+-    Blockchain, Wallet,
++    Blockchain,
++    Wallet,
+ };
+ 
++/// The `clog` macro is used to log messages to the browser console using the `web_sys::console::log_1` function.
++/// The macro takes a variable number of arguments, which are passed to the `format!` macro to create a formatted string.
++#[macro_export]
++macro_rules! clog {
++    ($($t:tt)*) => {
++        web_sys::console::log_1(&format!( $( $t )* ).into());
++    };
++}
++
++fn log_message<T>(key: &str, value: T) where T: std::fmt::Debug {
++    #[cfg(target_arch = "wasm32")]
++    clog!("{} {:?}", key, value);
++    #[cfg(not(target_arch = "wasm32"))]
++    println!("{} {:?}", key, value);
++}
++
+ #[cfg(not(feature = "fuzztarget"))]
+ pub(crate) fn get_new_serial_id() -> u64 {
+     thread_rng().next_u64()
+@@ -48,7 +61,7 @@ pub(crate) fn get_new_temporary_id() -> [u8; 32] {
+ pub(crate) fn compute_id(
+     fund_tx_id: Txid,
+     fund_output_index: u16,
+-    temporary_id: &[u8; 32],
++    temporary_id: &[u8; 32]
+ ) -> [u8; 32] {
+     let mut res = [0; 32];
+     for i in 0..32 {
+@@ -64,11 +77,10 @@ pub(crate) fn get_party_params<C: Signing, W: Deref, B: Deref>(
+     own_collateral: u64,
+     fee_rate: u64,
+     wallet: &W,
+-    blockchain: &B,
+-) -> Result<(PartyParams, SecretKey, Vec<FundingInputInfo>), Error>
+-where
+-    W::Target: Wallet,
+-    B::Target: Blockchain,
++    blockchain: &B
++)
++    -> Result<(PartyParams, SecretKey, Vec<FundingInputInfo>), Error>
++    where W::Target: Wallet, B::Target: Blockchain
+ {
+     let funding_privkey = wallet.get_new_secret_key()?;
+     let funding_pubkey = PublicKey::from_secret_key(secp, &funding_privkey);
+@@ -80,10 +92,29 @@ where
+     let change_spk = change_addr.script_pubkey();
+     let change_serial_id = get_new_serial_id();
+ 
++    log_message("own_collateral: {:?}", own_collateral);
++
+     // Add base cost of fund tx + CET / 2 and a CET output to the collateral.
+-    let appr_required_amount =
+-        own_collateral + get_half_common_fee(fee_rate)? + dlc::util::weight_to_fee(124, fee_rate)?;
+-    let utxos = wallet.get_utxos_for_amount(appr_required_amount, Some(fee_rate), true)?;
++    let appr_required_amount;
++    if own_collateral == 0 {
++        appr_required_amount =
++            own_collateral + get_half_common_fee(0)? + dlc::util::weight_to_fee(124, fee_rate)?;
++    } else {
++        let half_common_fee = get_half_common_fee(fee_rate)?;
++        let total_fee = half_common_fee * 2 + own_collateral;
++        appr_required_amount =
++            own_collateral + total_fee + dlc::util::weight_to_fee(124, fee_rate)?;
++    }
++    log_message("appr_required_amount:", appr_required_amount);
++
++    let utxos: Vec<crate::Utxo>;
++    if own_collateral == 0 {
++        utxos = wallet.get_utxos_for_amount(0, Some(fee_rate), true)?;
++    } else {
++        utxos = wallet.get_utxos_for_amount(appr_required_amount, Some(fee_rate), true)?;
++    }
++
++    log_message("utxos:", utxos.clone());
+ 
+     let mut funding_inputs_info: Vec<FundingInputInfo> = Vec::new();
+     let mut funding_tx_info: Vec<TxInputInfo> = Vec::new();
+@@ -123,16 +154,16 @@ where
+         collateral: own_collateral,
+         input_amount: total_input,
+     };
+-
++    log_message("party_params.input_amount:", party_params.input_amount);
++    
+     Ok((party_params, funding_privkey, funding_inputs_info))
+ }
+ 
+ pub(crate) fn get_party_base_points<C: Signing, W: Deref>(
+     secp: &Secp256k1<C>,
+-    wallet: &W,
++    wallet: &W
+ ) -> Result<PartyBasePoints, Error>
+-where
+-    W::Target: Wallet,
++    where W::Target: Wallet
+ {
+     Ok(PartyBasePoints {
+         own_basepoint: PublicKey::from_secret_key(secp, &wallet.get_new_secret_key()?),
+@@ -143,13 +174,13 @@ where
+ 
+ pub(crate) fn get_half_common_fee(fee_rate: u64) -> Result<u64, Error> {
+     let common_fee = dlc::util::get_common_fee(fee_rate)?;
+-    Ok((common_fee as f64 / 2_f64).ceil() as u64)
++    Ok(((common_fee as f64) / 2_f64).ceil() as u64)
+ }
+ 
+ pub(crate) fn get_range_info_and_oracle_sigs(
+     contract_info: &ContractInfo,
+     adaptor_info: &AdaptorInfo,
+-    attestations: &[(usize, OracleAttestation)],
++    attestations: &[(usize, OracleAttestation)]
+ ) -> Result<(RangeInfo, Vec<Vec<secp256k1_zkp::schnorr::Signature>>), Error> {
+     let outcomes = attestations
+         .iter()
+@@ -167,13 +198,11 @@ pub(crate) fn get_range_info_and_oracle_sigs(
+         return Ok((range_info, sigs));
+     }
+ 
+-    Err(Error::InvalidState(
+-        "Could not find closing info for given outcomes".to_string(),
+-    ))
++    Err(Error::InvalidState("Could not find closing info for given outcomes".to_string()))
+ }
+ 
+ pub(crate) fn get_latest_maturity_date(
+-    announcements: &[Vec<OracleAnnouncement>],
++    announcements: &[Vec<OracleAnnouncement>]
+ ) -> Result<u32, Error> {
+     announcements
+         .iter()
+@@ -189,22 +218,20 @@ pub(crate) fn get_latest_maturity_date(
+ mod tests {
+     use std::str::FromStr;
+ 
+-    use dlc_messages::oracle_msgs::{EnumEventDescriptor, EventDescriptor, OracleEvent};
+-    use secp256k1_zkp::{
+-        rand::{thread_rng, RngCore},
+-        schnorr::Signature,
+-        XOnlyPublicKey,
+-    };
++    use dlc_messages::oracle_msgs::{ EnumEventDescriptor, EventDescriptor, OracleEvent };
++    use secp256k1_zkp::{ rand::{ thread_rng, RngCore }, schnorr::Signature, XOnlyPublicKey };
+ 
+     use super::*;
+ 
+     #[test]
+     fn id_computation_test() {
+-        let transaction = bitcoin_test_utils::tx_from_string("01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff020000ffffffff0101000000000000000000000000");
++        let transaction = bitcoin_test_utils::tx_from_string(
++            "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff020000ffffffff0101000000000000000000000000"
++        );
+         let output_index = 1;
+         let temporary_id = [34u8; 32];
+         let expected_id = bitcoin_test_utils::str_to_hex(
+-            "81db60dcbef10a2d0cb92cb78400a96ee6a9b6da785d0230bdabf1e18a2d6ffb",
++            "81db60dcbef10a2d0cb92cb78400a96ee6a9b6da785d0230bdabf1e18a2d6ffb"
+         );
+ 
+         let id = compute_id(transaction.txid(), output_index, &temporary_id);
+@@ -220,7 +247,12 @@ mod tests {
+             .collect();
+         let announcements: Vec<Vec<_>> = maturity_dates
+             .iter()
+-            .map(|x| x.iter().map(|y| create_announcement(*y)).collect())
++            .map(|x|
++                x
++                    .iter()
++                    .map(|y| create_announcement(*y))
++                    .collect()
++            )
+             .collect();
+ 
+         assert_eq!(
+@@ -231,14 +263,22 @@ mod tests {
+ 
+     fn create_announcement(maturity: u32) -> OracleAnnouncement {
+         let xonly_pk = XOnlyPublicKey::from_str(
+-            "e6642fd69bd211f93f7f1f36ca51a26a5290eb2dd1b0d8279a87bb0d480c8443",
+-        )
+-        .unwrap();
++            "e6642fd69bd211f93f7f1f36ca51a26a5290eb2dd1b0d8279a87bb0d480c8443"
++        ).unwrap();
+ 
+         OracleAnnouncement {
+-            announcement_signature: Signature::from_str("6470FD1303DDA4FDA717B9837153C24A6EAB377183FC438F939E0ED2B620E9EE5077C4A8B8DCA28963D772A94F5F0DDF598E1C47C137F91933274C7C3EDADCE8").unwrap(),
++            announcement_signature: Signature::from_str(
++                "6470FD1303DDA4FDA717B9837153C24A6EAB377183FC438F939E0ED2B620E9EE5077C4A8B8DCA28963D772A94F5F0DDF598E1C47C137F91933274C7C3EDADCE8"
++            ).unwrap(),
+             oracle_public_key: xonly_pk,
+-            oracle_event: OracleEvent { oracle_nonces: vec![xonly_pk], event_maturity_epoch: maturity,event_descriptor: EventDescriptor::EnumEvent(EnumEventDescriptor { outcomes: vec!["1".to_string(), "2".to_string()] }), event_id: "01".to_string() },
++            oracle_event: OracleEvent {
++                oracle_nonces: vec![xonly_pk],
++                event_maturity_epoch: maturity,
++                event_descriptor: EventDescriptor::EnumEvent(EnumEventDescriptor {
++                    outcomes: vec!["1".to_string(), "2".to_string()],
++                }),
++                event_id: "01".to_string(),
++            },
+         }
+     }
+ }
+diff --git a/dlc/Cargo.toml b/dlc/Cargo.toml
+index a6c5cb1..3b0a9ba 100644
+--- a/dlc/Cargo.toml
++++ b/dlc/Cargo.toml
+@@ -27,3 +27,9 @@ bitcoincore-rpc-json = {version = "0.16.0" }
+ dlc-trie = {path = "../dlc-trie"}
+ rayon = "1.5"
+ secp256k1-zkp = {version = "0.7.0", features = ["bitcoin_hashes", "rand", "rand-std", "serde", "global-context"]}
++
++[dependencies.web-sys]
++version = "0.3"
++features = [
++  "console",
++]
+diff --git a/dlc/src/lib.rs b/dlc/src/lib.rs
+index 0aede2e..f5db5f9 100644
+--- a/dlc/src/lib.rs
++++ b/dlc/src/lib.rs
+@@ -74,10 +74,10 @@ macro_rules! checked_add {
+             $a, $b
+         )))
+     };
+-    ($a: expr, $b: expr, $c: expr) => {
++    ($a:expr, $b:expr, $c:expr) => {
+         checked_add!(checked_add!($a, $b)?, $c)
+     };
+-    ($a: expr, $b: expr, $c: expr, $d: expr) => {
++    ($a:expr, $b:expr, $c:expr, $d:expr) => {
+         checked_add!(checked_add!($a, $b, $c)?, $d)
+     };
+ }
+@@ -275,68 +275,82 @@ impl PartyParams {
+         fee_rate_per_vb: u64,
+         extra_fee: u64,
+     ) -> Result<(TxOut, u64, u64), Error> {
+-        let mut inputs_weight: usize = 0;
+-
+-        for w in &self.inputs {
+-            let script_weight = util::redeem_script_to_script_sig(&w.redeem_script)
+-                .len()
+-                .checked_mul(4)
+-                .ok_or(Error::InvalidArgument(format!("[get_change_output_and_fees] error: failed to transform a redeem script for a p2sh-p2w* output to a script signature")))?;
+-            inputs_weight = checked_add!(
+-                inputs_weight,
+-                TX_INPUT_BASE_WEIGHT,
+-                script_weight,
+-                w.max_witness_len
+-            )?;
+-        }
+-
+-        // Value size + script length var_int + ouput script pubkey size
+-        let change_size = self.change_script_pubkey.len();
+-        // Change size is scaled by 4 from vBytes to weight units
+-        let change_weight = change_size
+-            .checked_mul(4)
+-            .ok_or(Error::InvalidArgument(format!(
+-                "[get_change_output_and_fees] error: failed to calculate change weight"
+-            )))?;
+-
+-        // Base weight (nLocktime, nVersion, ...) is distributed among parties
+-        // independently of inputs contributed
+-        let this_party_fund_base_weight = FUND_TX_BASE_WEIGHT / 2;
+-
+-        let total_fund_weight = checked_add!(
+-            this_party_fund_base_weight,
+-            inputs_weight,
+-            change_weight,
+-            36
+-        )?;
+-        let fund_fee = util::weight_to_fee(total_fund_weight, fee_rate_per_vb)?;
+-
+-        // Base weight (nLocktime, nVersion, funding input ...) is distributed
+-        // among parties independently of output types
+-        let this_party_cet_base_weight = CET_BASE_WEIGHT / 2;
+-
+-        // size of the payout script pubkey scaled by 4 from vBytes to weight units
+-        let output_spk_weight =
+-            self.payout_script_pubkey
+-                .len()
+-                .checked_mul(4)
+-                .ok_or(Error::InvalidArgument(format!(
+-            "[get_change_output_and_fees] error: failed to calculate payout script pubkey weight"
+-        )))?;
+-        let total_cet_weight = checked_add!(this_party_cet_base_weight, output_spk_weight)?;
+-        let cet_or_refund_fee = util::weight_to_fee(total_cet_weight, fee_rate_per_vb)?;
+-        let required_input_funds =
+-            checked_add!(self.collateral, fund_fee, cet_or_refund_fee, extra_fee)?;
+-        if self.input_amount < required_input_funds {
+-            return Err(Error::InvalidArgument(format!("[get_change_output_and_fees] error: input amount is lower than the sum of the collateral plus the required fees => input_amount: {}, collateral: {}, fund fee: {}, cet_or_refund_fee: {}, extra_fee: {}", self.input_amount, self.collateral, fund_fee, cet_or_refund_fee, extra_fee)));
++        match self.collateral {
++            0 => Ok((
++                TxOut {
++                    value: self.input_amount,
++                    script_pubkey: self.change_script_pubkey.clone(),
++                },
++                0,
++                0,
++            )),
++            _ => {
++                let mut inputs_weight: usize = 0;
++
++                for w in &self.inputs {
++                    let script_weight = util
++                        ::redeem_script_to_script_sig(&w.redeem_script)
++                        .len()
++                        .checked_mul(4)
++                        .ok_or(Error::InvalidArgument(format!("[get_change_output_and_fees] error: failed to transform a redeem script for a p2sh-p2w* output to a script signature")))?;
++                    inputs_weight = checked_add!(
++                        inputs_weight,
++                        TX_INPUT_BASE_WEIGHT,
++                        script_weight,
++                        w.max_witness_len
++                    )?;
++                }
++
++                // Value size + script length var_int + ouput script pubkey size
++                let change_size = self.change_script_pubkey.len();
++                // Change size is scaled by 4 from vBytes to weight units
++                let change_weight =
++                    change_size
++                        .checked_mul(4)
++                        .ok_or(Error::InvalidArgument(format!(
++                            "[get_change_output_and_fees] error: failed to calculate change weight"
++                        )))?;
++
++                // Base weight (nLocktime, nVersion, ...) is distributed among parties
++                // independently of inputs contributed
++                let this_party_fund_base_weight = FUND_TX_BASE_WEIGHT;
++
++                let total_fund_weight = checked_add!(
++                    this_party_fund_base_weight,
++                    inputs_weight,
++                    change_weight,
++                    36
++                )?;
++                let fund_fee = util::weight_to_fee(total_fund_weight, fee_rate_per_vb)?;
++
++                // Base weight (nLocktime, nVersion, funding input ...) is distributed
++                // among parties independently of output types
++                let this_party_cet_base_weight = CET_BASE_WEIGHT;
++
++                // size of the payout script pubkey scaled by 4 from vBytes to weight units
++                let output_spk_weight =
++                    self.payout_script_pubkey
++                        .len()
++                        .checked_mul(4)
++                        .ok_or(Error::InvalidArgument(format!(
++                    "[get_change_output_and_fees] error: failed to calculate payout script pubkey weight"
++                )))?;
++                let total_cet_weight = checked_add!(this_party_cet_base_weight, output_spk_weight)?;
++                let cet_or_refund_fee = util::weight_to_fee(total_cet_weight, fee_rate_per_vb)?;
++                let required_input_funds: u64 =
++                    checked_add!(self.collateral, fund_fee, cet_or_refund_fee, extra_fee)?;
++
++                if self.input_amount < required_input_funds {
++                    return Err(Error::InvalidArgument(format!("[get_change_output_and_fees] error: input amount is lower than the sum of the collateral plus the required fees => input_amount: {}, collateral: {}, fund fee: {}, cet_or_refund_fee: {}, extra_fee: {}", self.input_amount, self.collateral, fund_fee, cet_or_refund_fee, extra_fee)));
++                }
++
++                let change_output = TxOut {
++                    value: self.input_amount - required_input_funds,
++                    script_pubkey: self.change_script_pubkey.clone(),
++                };
++                Ok((change_output, fund_fee, cet_or_refund_fee))
++            }
+         }
+-
+-        let change_output = TxOut {
+-            value: self.input_amount - required_input_funds,
+-            script_pubkey: self.change_script_pubkey.clone(),
+-        };
+-
+-        Ok((change_output, fund_fee, cet_or_refund_fee))
+     }
+ 
+     fn get_unsigned_tx_inputs_and_serial_ids(&self, sequence: Sequence) -> (Vec<TxIn>, Vec<u64>) {
+@@ -1136,7 +1150,8 @@ mod tests {
+             SecretKey::from_str("0000000000000000000000000000000000000000000000000000000000000006")
+                 .unwrap();
+ 
+-        let expected_serialized = "020000000001024F601442E48EEC22FF3A907C5F5290C6A0D3D08FB869E46EBFBAA9226B6D26830000000000FFFFFFFF98BBD477219A151A1DAF5377B30E8C5F9FB574783943F33AC523EF072FA292BC0000000000FFFFFFFF0338C3EB0B000000002200209B984C7BAE3EFDDC3A3F0A20FF81BFE89ED1FE07FF13E562149EE654BED845DBE70F102401000000160014FA3629F3060B6C1A5A365C30BF66FA00F155CB9EE70F10240100000016001465D4D622585BAF5151DE860B1E7AF58710F20DA20247304402207108DE1563AE311F8D4217E1C0C7463386C1A135BE6AF88CBE8D89A3A08D65090220195A2B0140FB9BA83F20CF45AD6EA088BB0C6860C0D4995F1CF1353739CA65A90121022F8BDE4D1A07209355B4A7250A5C5128E88B84BDDC619AB7CBA8D569B240EFE4024730440220048716EAEE918AEBCB1BFCFAF7564E78293A7BB0164D9A7844E42FCEB5AE393C022022817D033C9DB19C5BDCADD49B7587A810B6FC2264158A59665ABA8AB298455B012103FFF97BD5755EEEA420453A14355235D382F6472F8568A18B2F057A146029755600000000";
++        let expected_serialized =
++            "020000000001024F601442E48EEC22FF3A907C5F5290C6A0D3D08FB869E46EBFBAA9226B6D26830000000000FFFFFFFF98BBD477219A151A1DAF5377B30E8C5F9FB574783943F33AC523EF072FA292BC0000000000FFFFFFFF0338C3EB0B000000002200209B984C7BAE3EFDDC3A3F0A20FF81BFE89ED1FE07FF13E562149EE654BED845DBE70F102401000000160014FA3629F3060B6C1A5A365C30BF66FA00F155CB9EE70F10240100000016001465D4D622585BAF5151DE860B1E7AF58710F20DA20247304402207108DE1563AE311F8D4217E1C0C7463386C1A135BE6AF88CBE8D89A3A08D65090220195A2B0140FB9BA83F20CF45AD6EA088BB0C6860C0D4995F1CF1353739CA65A90121022F8BDE4D1A07209355B4A7250A5C5128E88B84BDDC619AB7CBA8D569B240EFE4024730440220048716EAEE918AEBCB1BFCFAF7564E78293A7BB0164D9A7844E42FCEB5AE393C022022817D033C9DB19C5BDCADD49B7587A810B6FC2264158A59665ABA8AB298455B012103FFF97BD5755EEEA420453A14355235D382F6472F8568A18B2F057A146029755600000000";
+ 
+         let funding_script_pubkey =
+             make_funding_redeemscript(&offer_fund_pubkey, &accept_fund_pubkey);
+@@ -1335,7 +1350,7 @@ mod tests {
+                         (0..NB_DIGITS)
+                             .map(|z| {
+                                 Message::from_hashed_data::<secp256k1_zkp::hashes::sha256::Hash>(&[
+-                                    ((y + x + z) as u8),
++                                    (y + x + z) as u8,
+                                 ])
+                             })
+                             .collect()
+@@ -1417,7 +1432,7 @@ mod tests {
+                 &offer_party_params.fund_pubkey,
+                 &funding_script_pubkey,
+                 fund_output_value,
+-                &messages[i],
++                &messages[i]
+             )
+             .is_ok()));
+         sign_res.expect("Error signing CET");
+diff --git a/simple-wallet/src/lib.rs b/simple-wallet/src/lib.rs
+index c36e3a0..fe8034b 100644
+--- a/simple-wallet/src/lib.rs
++++ b/simple-wallet/src/lib.rs
+@@ -232,6 +232,9 @@ where
+         lock_utxos: bool,
+     ) -> Result<Vec<Utxo>> {
+         let org_utxos = self.storage.get_utxos()?;
++        println!("amount: {:?}", amount);
++        println!("fee_rate: {:?}", fee_rate);
++        println!("org_utxos: {:?}", org_utxos);
+         let utxos = org_utxos
+             .iter()
+             .filter(|x| !x.reserved)
+@@ -245,6 +248,7 @@ where
+                 satisfaction_weight: 107,
+             })
+             .collect::<Vec<_>>();
++        println!("utxos: {:?}", utxos);
+         let coin_selection = BranchAndBoundCoinSelection::default();
+         let dummy_pubkey: PublicKey =
+             "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+@@ -255,26 +259,29 @@ where
+         let fee_rate = FeeRate::from_sat_per_vb(fee_rate.unwrap() as f32);
+         let selection = coin_selection
+             .coin_select(self, Vec::new(), utxos, fee_rate, amount, &dummy_drain)
+-            .map_err(|e| Error::WalletError(Box::new(e)))?;
++            .unwrap();
++            // .map_err(|e| Error::WalletError(Box::new(e)))?;
++        println!("selection: {:?}", selection);
+         let mut res = Vec::new();
+-        if lock_utxos {
+-            for utxo in selection.selected {
+-                let local_utxo = if let BdkUtxo::Local(l) = utxo {
+-                    l
+-                } else {
+-                    panic!();
+-                };
+-                let org = org_utxos
+-                    .iter()
+-                    .find(|x| x.tx_out == local_utxo.txout && x.outpoint == local_utxo.outpoint)
+-                    .unwrap();
++        for utxo in selection.selected {
++            let local_utxo = if let BdkUtxo::Local(l) = utxo {
++                l
++            } else {
++                panic!();
++            };
++            let org = org_utxos
++                .iter()
++                .find(|x| x.tx_out == local_utxo.txout && x.outpoint == local_utxo.outpoint)
++                .unwrap();
++            if lock_utxos {
+                 let updated = Utxo {
+                     reserved: true,
+                     ..org.clone()
+                 };
+-                res.push(org.clone());
+                 self.storage.upsert_utxo(&updated)?;
+             }
++            res.push(org.clone());
++            
+         }
+         Ok(res)
+     }

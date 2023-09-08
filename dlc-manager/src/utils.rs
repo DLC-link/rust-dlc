@@ -1,8 +1,14 @@
 //! #Utils
 use std::ops::Deref;
 
+use crate::{
+    channel::party_points::PartyBasePoints,
+    contract::{contract_info::ContractInfo, AdaptorInfo, FundingInputInfo},
+    error::Error,
+    Blockchain, Wallet,
+};
 use bitcoin::{consensus::Encodable, Txid};
-use dlc::{PartyParams, TxInputInfo};
+use dlc::{util::get_common_fee, PartyParams, TxInputInfo};
 use dlc_messages::{
     oracle_msgs::{OracleAnnouncement, OracleAttestation},
     FundingInput,
@@ -11,13 +17,6 @@ use dlc_trie::RangeInfo;
 #[cfg(not(feature = "fuzztarget"))]
 use secp256k1_zkp::rand::{thread_rng, Rng, RngCore};
 use secp256k1_zkp::{PublicKey, Secp256k1, SecretKey, Signing};
-
-use crate::{
-    channel::party_points::PartyBasePoints,
-    contract::{contract_info::ContractInfo, AdaptorInfo, FundingInputInfo},
-    error::Error,
-    Blockchain, Wallet,
-};
 
 #[cfg(not(feature = "fuzztarget"))]
 pub(crate) fn get_new_serial_id() -> u64 {
@@ -80,10 +79,22 @@ where
     let change_spk = change_addr.script_pubkey();
     let change_serial_id = get_new_serial_id();
 
+    let utxos: Vec<crate::Utxo>;
     // Add base cost of fund tx + CET / 2 and a CET output to the collateral.
-    let appr_required_amount =
-        own_collateral + get_half_common_fee(fee_rate)? + dlc::util::weight_to_fee(124, fee_rate)?;
-    let utxos = wallet.get_utxos_for_amount(appr_required_amount, Some(fee_rate), true)?;
+    let appr_required_amount;
+    match own_collateral {
+        0 => {
+            appr_required_amount = 0;
+            utxos = Vec::new();
+        }
+        _ => {
+            let common_fee = get_common_fee(fee_rate)?;
+            let total_fee = common_fee + own_collateral;
+            appr_required_amount =
+                own_collateral + total_fee + dlc::util::weight_to_fee(124, fee_rate)?;
+            utxos = wallet.get_utxos_for_amount(appr_required_amount, Some(fee_rate), true)?;
+        }
+    }
 
     let mut funding_inputs_info: Vec<FundingInputInfo> = Vec::new();
     let mut funding_tx_info: Vec<TxInputInfo> = Vec::new();
@@ -141,11 +152,6 @@ where
     })
 }
 
-pub(crate) fn get_half_common_fee(fee_rate: u64) -> Result<u64, Error> {
-    let common_fee = dlc::util::get_common_fee(fee_rate)?;
-    Ok((common_fee as f64 / 2_f64).ceil() as u64)
-}
-
 pub(crate) fn get_range_info_and_oracle_sigs(
     contract_info: &ContractInfo,
     adaptor_info: &AdaptorInfo,
@@ -200,7 +206,9 @@ mod tests {
 
     #[test]
     fn id_computation_test() {
-        let transaction = bitcoin_test_utils::tx_from_string("01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff020000ffffffff0101000000000000000000000000");
+        let transaction = bitcoin_test_utils::tx_from_string(
+            "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff020000ffffffff0101000000000000000000000000"
+        );
         let output_index = 1;
         let temporary_id = [34u8; 32];
         let expected_id = bitcoin_test_utils::str_to_hex(
@@ -236,9 +244,18 @@ mod tests {
         .unwrap();
 
         OracleAnnouncement {
-            announcement_signature: Signature::from_str("6470FD1303DDA4FDA717B9837153C24A6EAB377183FC438F939E0ED2B620E9EE5077C4A8B8DCA28963D772A94F5F0DDF598E1C47C137F91933274C7C3EDADCE8").unwrap(),
+            announcement_signature: Signature::from_str(
+                "6470FD1303DDA4FDA717B9837153C24A6EAB377183FC438F939E0ED2B620E9EE5077C4A8B8DCA28963D772A94F5F0DDF598E1C47C137F91933274C7C3EDADCE8"
+            ).unwrap(),
             oracle_public_key: xonly_pk,
-            oracle_event: OracleEvent { oracle_nonces: vec![xonly_pk], event_maturity_epoch: maturity,event_descriptor: EventDescriptor::EnumEvent(EnumEventDescriptor { outcomes: vec!["1".to_string(), "2".to_string()] }), event_id: "01".to_string() },
+            oracle_event: OracleEvent {
+                oracle_nonces: vec![xonly_pk],
+                event_maturity_epoch: maturity,
+                event_descriptor: EventDescriptor::EnumEvent(EnumEventDescriptor {
+                    outcomes: vec!["1".to_string(), "2".to_string()],
+                }),
+                event_id: "01".to_string(),
+            },
         }
     }
 }

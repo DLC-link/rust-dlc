@@ -255,26 +255,27 @@ where
         let fee_rate = FeeRate::from_sat_per_vb(fee_rate.unwrap() as f32);
         let selection = coin_selection
             .coin_select(self, Vec::new(), utxos, fee_rate, amount, &dummy_drain)
-            .map_err(|e| Error::WalletError(Box::new(e)))?;
+            .unwrap();
+        // .map_err(|e| Error::WalletError(Box::new(e)))?;
         let mut res = Vec::new();
-        if lock_utxos {
-            for utxo in selection.selected {
-                let local_utxo = if let BdkUtxo::Local(l) = utxo {
-                    l
-                } else {
-                    panic!();
-                };
-                let org = org_utxos
-                    .iter()
-                    .find(|x| x.tx_out == local_utxo.txout && x.outpoint == local_utxo.outpoint)
-                    .unwrap();
+        for utxo in selection.selected {
+            let local_utxo = if let BdkUtxo::Local(l) = utxo {
+                l
+            } else {
+                panic!();
+            };
+            let org = org_utxos
+                .iter()
+                .find(|x| x.tx_out == local_utxo.txout && x.outpoint == local_utxo.outpoint)
+                .unwrap();
+            if lock_utxos {
                 let updated = Utxo {
                     reserved: true,
                     ..org.clone()
                 };
-                res.push(org.clone());
                 self.storage.upsert_utxo(&updated)?;
             }
+            res.push(org.clone());
         }
         Ok(res)
     }

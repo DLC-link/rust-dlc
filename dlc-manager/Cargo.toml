@@ -44,3 +44,10 @@ simple-wallet = {path = "../simple-wallet"}
 [[bench]]
 harness = false
 name = "benchmarks"
+
+
+[dependencies.web-sys]
+version = "0.3"
+features = [
+  "console",
+]

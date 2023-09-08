@@ -27,3 +27,9 @@ bitcoincore-rpc-json = {version = "0.16.0" }
 dlc-trie = {path = "../dlc-trie"}
 rayon = "1.5"
 secp256k1-zkp = {version = "0.7.0", features = ["bitcoin_hashes", "rand", "rand-std", "serde", "global-context"]}
+
+[dependencies.web-sys]
+version = "0.3"
+features = [
+  "console",
+]

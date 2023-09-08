@@ -74,10 +74,10 @@ macro_rules! checked_add {
             $a, $b
         )))
     };
-    ($a: expr, $b: expr, $c: expr) => {
+    ($a:expr, $b:expr, $c:expr) => {
         checked_add!(checked_add!($a, $b)?, $c)
     };
-    ($a: expr, $b: expr, $c: expr, $d: expr) => {
+    ($a:expr, $b:expr, $c:expr, $d:expr) => {
         checked_add!(checked_add!($a, $b, $c)?, $d)
     };
 }
@@ -275,68 +275,82 @@ impl PartyParams {
         fee_rate_per_vb: u64,
         extra_fee: u64,
     ) -> Result<(TxOut, u64, u64), Error> {
-        let mut inputs_weight: usize = 0;
+        match self.collateral {
+            0 => Ok((
+                TxOut {
+                    value: self.input_amount,
+                    script_pubkey: self.change_script_pubkey.clone(),
+                },
+                0,
+                0,
+            )),
+            _ => {
+                let mut inputs_weight: usize = 0;
 
-        for w in &self.inputs {
-            let script_weight = util::redeem_script_to_script_sig(&w.redeem_script)
-                .len()
-                .checked_mul(4)
-                .ok_or(Error::InvalidArgument(format!("[get_change_output_and_fees] error: failed to transform a redeem script for a p2sh-p2w* output to a script signature")))?;
-            inputs_weight = checked_add!(
-                inputs_weight,
-                TX_INPUT_BASE_WEIGHT,
-                script_weight,
-                w.max_witness_len
-            )?;
+                for w in &self.inputs {
+                    let script_weight = util
+                        ::redeem_script_to_script_sig(&w.redeem_script)
+                        .len()
+                        .checked_mul(4)
+                        .ok_or(Error::InvalidArgument(format!("[get_change_output_and_fees] error: failed to transform a redeem script for a p2sh-p2w* output to a script signature")))?;
+                    inputs_weight = checked_add!(
+                        inputs_weight,
+                        TX_INPUT_BASE_WEIGHT,
+                        script_weight,
+                        w.max_witness_len
+                    )?;
+                }
+
+                // Value size + script length var_int + ouput script pubkey size
+                let change_size = self.change_script_pubkey.len();
+                // Change size is scaled by 4 from vBytes to weight units
+                let change_weight =
+                    change_size
+                        .checked_mul(4)
+                        .ok_or(Error::InvalidArgument(format!(
+                            "[get_change_output_and_fees] error: failed to calculate change weight"
+                        )))?;
+
+                // Base weight (nLocktime, nVersion, ...) is distributed among parties
+                // independently of inputs contributed
+                let this_party_fund_base_weight = FUND_TX_BASE_WEIGHT;
+
+                let total_fund_weight = checked_add!(
+                    this_party_fund_base_weight,
+                    inputs_weight,
+                    change_weight,
+                    36
+                )?;
+                let fund_fee = util::weight_to_fee(total_fund_weight, fee_rate_per_vb)?;
+
+                // Base weight (nLocktime, nVersion, funding input ...) is distributed
+                // among parties independently of output types
+                let this_party_cet_base_weight = CET_BASE_WEIGHT;
+
+                // size of the payout script pubkey scaled by 4 from vBytes to weight units
+                let output_spk_weight =
+                    self.payout_script_pubkey
+                        .len()
+                        .checked_mul(4)
+                        .ok_or(Error::InvalidArgument(format!(
+                    "[get_change_output_and_fees] error: failed to calculate payout script pubkey weight"
+                )))?;
+                let total_cet_weight = checked_add!(this_party_cet_base_weight, output_spk_weight)?;
+                let cet_or_refund_fee = util::weight_to_fee(total_cet_weight, fee_rate_per_vb)?;
+                let required_input_funds: u64 =
+                    checked_add!(self.collateral, fund_fee, cet_or_refund_fee, extra_fee)?;
+
+                if self.input_amount < required_input_funds {
+                    return Err(Error::InvalidArgument(format!("[get_change_output_and_fees] error: input amount is lower than the sum of the collateral plus the required fees => input_amount: {}, collateral: {}, fund fee: {}, cet_or_refund_fee: {}, extra_fee: {}", self.input_amount, self.collateral, fund_fee, cet_or_refund_fee, extra_fee)));
+                }
+
+                let change_output = TxOut {
+                    value: self.input_amount - required_input_funds,
+                    script_pubkey: self.change_script_pubkey.clone(),
+                };
+                Ok((change_output, fund_fee, cet_or_refund_fee))
+            }
         }
-
-        // Value size + script length var_int + ouput script pubkey size
-        let change_size = self.change_script_pubkey.len();
-        // Change size is scaled by 4 from vBytes to weight units
-        let change_weight = change_size
-            .checked_mul(4)
-            .ok_or(Error::InvalidArgument(format!(
-                "[get_change_output_and_fees] error: failed to calculate change weight"
-            )))?;
-
-        // Base weight (nLocktime, nVersion, ...) is distributed among parties
-        // independently of inputs contributed
-        let this_party_fund_base_weight = FUND_TX_BASE_WEIGHT / 2;
-
-        let total_fund_weight = checked_add!(
-            this_party_fund_base_weight,
-            inputs_weight,
-            change_weight,
-            36
-        )?;
-        let fund_fee = util::weight_to_fee(total_fund_weight, fee_rate_per_vb)?;
-
-        // Base weight (nLocktime, nVersion, funding input ...) is distributed
-        // among parties independently of output types
-        let this_party_cet_base_weight = CET_BASE_WEIGHT / 2;
-
-        // size of the payout script pubkey scaled by 4 from vBytes to weight units
-        let output_spk_weight =
-            self.payout_script_pubkey
-                .len()
-                .checked_mul(4)
-                .ok_or(Error::InvalidArgument(format!(
-            "[get_change_output_and_fees] error: failed to calculate payout script pubkey weight"
-        )))?;
-        let total_cet_weight = checked_add!(this_party_cet_base_weight, output_spk_weight)?;
-        let cet_or_refund_fee = util::weight_to_fee(total_cet_weight, fee_rate_per_vb)?;
-        let required_input_funds =
-            checked_add!(self.collateral, fund_fee, cet_or_refund_fee, extra_fee)?;
-        if self.input_amount < required_input_funds {
-            return Err(Error::InvalidArgument(format!("[get_change_output_and_fees] error: input amount is lower than the sum of the collateral plus the required fees => input_amount: {}, collateral: {}, fund fee: {}, cet_or_refund_fee: {}, extra_fee: {}", self.input_amount, self.collateral, fund_fee, cet_or_refund_fee, extra_fee)));
-        }
-
-        let change_output = TxOut {
-            value: self.input_amount - required_input_funds,
-            script_pubkey: self.change_script_pubkey.clone(),
-        };
-
-        Ok((change_output, fund_fee, cet_or_refund_fee))
     }
 
     fn get_unsigned_tx_inputs_and_serial_ids(&self, sequence: Sequence) -> (Vec<TxIn>, Vec<u64>) {
@@ -1136,7 +1150,8 @@ mod tests {
             SecretKey::from_str("0000000000000000000000000000000000000000000000000000000000000006")
                 .unwrap();
 
-        let expected_serialized = "020000000001024F601442E48EEC22FF3A907C5F5290C6A0D3D08FB869E46EBFBAA9226B6D26830000000000FFFFFFFF98BBD477219A151A1DAF5377B30E8C5F9FB574783943F33AC523EF072FA292BC0000000000FFFFFFFF0338C3EB0B000000002200209B984C7BAE3EFDDC3A3F0A20FF81BFE89ED1FE07FF13E562149EE654BED845DBE70F102401000000160014FA3629F3060B6C1A5A365C30BF66FA00F155CB9EE70F10240100000016001465D4D622585BAF5151DE860B1E7AF58710F20DA20247304402207108DE1563AE311F8D4217E1C0C7463386C1A135BE6AF88CBE8D89A3A08D65090220195A2B0140FB9BA83F20CF45AD6EA088BB0C6860C0D4995F1CF1353739CA65A90121022F8BDE4D1A07209355B4A7250A5C5128E88B84BDDC619AB7CBA8D569B240EFE4024730440220048716EAEE918AEBCB1BFCFAF7564E78293A7BB0164D9A7844E42FCEB5AE393C022022817D033C9DB19C5BDCADD49B7587A810B6FC2264158A59665ABA8AB298455B012103FFF97BD5755EEEA420453A14355235D382F6472F8568A18B2F057A146029755600000000";
+        let expected_serialized =
+            "020000000001024F601442E48EEC22FF3A907C5F5290C6A0D3D08FB869E46EBFBAA9226B6D26830000000000FFFFFFFF98BBD477219A151A1DAF5377B30E8C5F9FB574783943F33AC523EF072FA292BC0000000000FFFFFFFF0338C3EB0B000000002200209B984C7BAE3EFDDC3A3F0A20FF81BFE89ED1FE07FF13E562149EE654BED845DBE70F102401000000160014FA3629F3060B6C1A5A365C30BF66FA00F155CB9EE70F10240100000016001465D4D622585BAF5151DE860B1E7AF58710F20DA20247304402207108DE1563AE311F8D4217E1C0C7463386C1A135BE6AF88CBE8D89A3A08D65090220195A2B0140FB9BA83F20CF45AD6EA088BB0C6860C0D4995F1CF1353739CA65A90121022F8BDE4D1A07209355B4A7250A5C5128E88B84BDDC619AB7CBA8D569B240EFE4024730440220048716EAEE918AEBCB1BFCFAF7564E78293A7BB0164D9A7844E42FCEB5AE393C022022817D033C9DB19C5BDCADD49B7587A810B6FC2264158A59665ABA8AB298455B012103FFF97BD5755EEEA420453A14355235D382F6472F8568A18B2F057A146029755600000000";
 
         let funding_script_pubkey =
             make_funding_redeemscript(&offer_fund_pubkey, &accept_fund_pubkey);
@@ -1335,7 +1350,7 @@ mod tests {
                         (0..NB_DIGITS)
                             .map(|z| {
                                 Message::from_hashed_data::<secp256k1_zkp::hashes::sha256::Hash>(&[
-                                    ((y + x + z) as u8),
+                                    (y + x + z) as u8,
                                 ])
                             })
                             .collect()
@@ -1417,7 +1432,7 @@ mod tests {
                 &offer_party_params.fund_pubkey,
                 &funding_script_pubkey,
                 fund_output_value,
-                &messages[i],
+                &messages[i]
             )
             .is_ok()));
         sign_res.expect("Error signing CET");
