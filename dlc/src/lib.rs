@@ -295,17 +295,20 @@ impl PartyParams {
         extra_fee: u64,
     ) -> Result<(TxOut, u64, u64), Error> {
         match self.collateral {
-            0 => Ok((
-                TxOut {
-                    value: self.input_amount,
-                    script_pubkey: self.change_script_pubkey.clone(),
-                },
-                0,
-                0,
-            )),
+            0 => {
+                log_message("so this is offeror", self.collateral);
+                Ok((
+                    TxOut {
+                        value: self.input_amount,
+                        script_pubkey: self.change_script_pubkey.clone(),
+                    },
+                    0,
+                    0,
+                ))
+            }
             _ => {
                 let mut inputs_weight: usize = 0;
-
+                log_message("so this is acceptor", self.collateral);
                 log_message("self.input_amount:", self.input_amount);
 
                 for w in &self.inputs {
