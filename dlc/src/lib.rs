@@ -453,7 +453,7 @@ pub(crate) fn create_fund_transaction_with_fees(
     let total_collateral = checked_add!(offer_params.collateral, accept_params.collateral)?;
 
     let (offer_change_output, offer_fund_fee, offer_cet_fee) =
-        offer_params.get_change_output_and_fees(0, extra_fee)?;
+        offer_params.get_change_output_and_fees(fee_rate_per_vb, extra_fee)?;
     let (accept_change_output, accept_fund_fee, accept_cet_fee) =
         accept_params.get_change_output_and_fees(fee_rate_per_vb, extra_fee)?;
 
