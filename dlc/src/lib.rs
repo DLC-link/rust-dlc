@@ -20,25 +20,6 @@ extern crate secp256k1_zkp;
 #[cfg(feature = "serde")]
 extern crate serde;
 
-/// The `clog` macro is used to log messages to the browser console using the `web_sys::console::log_1` function.
-/// The macro takes a variable number of arguments, which are passed to the `format!` macro to create a formatted string.
-#[macro_export]
-macro_rules! clog {
-    ($($t:tt)*) => {
-        web_sys::console::log_1(&format!( $( $t )* ).into());
-    };
-}
-
-fn log_message<T>(key: &str, value: T)
-where
-    T: std::fmt::Debug,
-{
-    #[cfg(target_arch = "wasm32")]
-    clog!("{} {:?}", key, value);
-    #[cfg(not(target_arch = "wasm32"))]
-    println!("{} {:?}", key, value);
-}
-
 use bitcoin::secp256k1::Scalar;
 use bitcoin::{
     blockdata::{
@@ -295,21 +276,16 @@ impl PartyParams {
         extra_fee: u64,
     ) -> Result<(TxOut, u64, u64), Error> {
         match self.collateral {
-            0 => {
-                log_message("so this is offeror", self.collateral);
-                Ok((
-                    TxOut {
-                        value: self.input_amount,
-                        script_pubkey: self.change_script_pubkey.clone(),
-                    },
-                    0,
-                    0,
-                ))
-            }
+            0 => Ok((
+                TxOut {
+                    value: self.input_amount,
+                    script_pubkey: self.change_script_pubkey.clone(),
+                },
+                0,
+                0,
+            )),
             _ => {
                 let mut inputs_weight: usize = 0;
-                log_message("so this is acceptor", self.collateral);
-                log_message("self.input_amount:", self.input_amount);
 
                 for w in &self.inputs {
                     let script_weight = util
@@ -363,9 +339,6 @@ impl PartyParams {
                 let cet_or_refund_fee = util::weight_to_fee(total_cet_weight, fee_rate_per_vb)?;
                 let required_input_funds: u64 =
                     checked_add!(self.collateral, fund_fee, cet_or_refund_fee, extra_fee)?;
-
-                log_message("input_amount:", self.input_amount);
-                log_message("required_input_funds:", required_input_funds);
 
                 if self.input_amount < required_input_funds {
                     return Err(Error::InvalidArgument(format!("[get_change_output_and_fees] error: input amount is lower than the sum of the collateral plus the required fees => input_amount: {}, collateral: {}, fund fee: {}, cet_or_refund_fee: {}, extra_fee: {}", self.input_amount, self.collateral, fund_fee, cet_or_refund_fee, extra_fee)));
@@ -457,22 +430,12 @@ pub(crate) fn create_fund_transaction_with_fees(
     let (accept_change_output, accept_fund_fee, accept_cet_fee) =
         accept_params.get_change_output_and_fees(fee_rate_per_vb, extra_fee)?;
 
-    log_message("offer_params.input_amount:", offer_params.input_amount);
-    log_message("accept_params.input_amount:", accept_params.input_amount);
-
-    log_message("total_collateral:", total_collateral);
-    log_message("offer_cet_fee:", offer_cet_fee);
-    log_message("accept_cet_fee", accept_cet_fee);
-    log_message("extra_fee:", extra_fee);
-
     let fund_output_value = checked_add!(offer_params.input_amount, accept_params.input_amount)?
         - offer_change_output.value
         - accept_change_output.value
         - offer_fund_fee
         - accept_fund_fee
         - extra_fee;
-
-    log_message("fund_output_value:", fund_output_value);
 
     assert_eq!(
         total_collateral + offer_cet_fee + accept_cet_fee + extra_fee,
