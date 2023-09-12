@@ -99,12 +99,12 @@ where
     let appr_required_amount =
         own_collateral + get_half_common_fee(fee_rate)? + dlc::util::weight_to_fee(124, fee_rate)?;
     let utxos = wallet.get_utxos_for_amount(appr_required_amount, Some(fee_rate), true)?;
-    log_to_console(key, value)!("fee_rate: {}", fee_rate);
+    log_to_console("fee_rate: {}", fee_rate);
     log_to_console("get_half_common_fee: {}", get_half_common_fee(fee_rate)?);
     log_to_console("dlc::util::weight_to_fee: {}", dlc::util::weight_to_fee(124, fee_rate)?);
     log_to_console("own_collateral: {}", own_collateral);
     log_to_console("app_required_amount: {}", appr_required_amount);
-    log_to_console("wallet.get_utxos_for_amount: {:?}", utxos);
+    log_to_console("wallet.get_utxos_for_amount: {:?}", utxos.clone());
 
     let mut funding_inputs_info: Vec<FundingInputInfo> = Vec::new();
     let mut funding_tx_info: Vec<TxInputInfo> = Vec::new();
