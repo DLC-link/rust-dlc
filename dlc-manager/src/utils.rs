@@ -45,6 +45,39 @@ pub(crate) fn get_new_temporary_id() -> [u8; 32] {
     res
 }
 
+/// Logs a message to the browser console using the `web_sys::console::log_1` function.
+///
+/// # Example
+///
+/// ```
+/// # #[macro_use] extern crate my_crate;
+/// clog!("Hello, world!");
+/// ```
+#[macro_export]
+macro_rules! clog {
+    ( $( $t:tt )* ) => {
+        web_sys::console::log_1(&format!( $( $t )* ).into());
+    }
+}
+
+/// Logs a message to the console using either the `web_sys::console::log_1` function (if running in a WebAssembly environment) or the `println!` macro (if running in a native environment).
+///
+/// # Example
+///
+/// ```
+/// # #[macro_use] extern crate my_crate;
+/// log_to_console!("Hello, world!");
+/// ```
+#[macro_export]
+macro_rules! log_to_console {
+    ( $( $t:tt )* ) => {
+        #[cfg(target_arch = "wasm32")]
+        $crate::clog!( $( $t )* );
+        #[cfg(not(target_arch = "wasm32"))]
+        println!( $( $t )* );
+    }
+}
+
 pub(crate) fn compute_id(
     fund_tx_id: Txid,
     fund_output_index: u16,
@@ -84,6 +117,12 @@ where
     let appr_required_amount =
         own_collateral + get_half_common_fee(fee_rate)? + dlc::util::weight_to_fee(124, fee_rate)?;
     let utxos = wallet.get_utxos_for_amount(appr_required_amount, Some(fee_rate), true)?;
+    log_to_console!("fee_rate: {}", fee_rate);
+    log_to_console!("get_half_common_fee: {}", get_half_common_fee(fee_rate)?);
+    log_to_console!("dlc::util::weight_to_fee: {}", dlc::util::weight_to_fee(124, fee_rate)?);
+    log_to_console!("own_collateral: {}", own_collateral);
+    log_to_console!("app_required_amount: {}", appr_required_amount);
+    log_to_console!("wallet.get_utxos_for_amount: {:?}", utxos);
 
     let mut funding_inputs_info: Vec<FundingInputInfo> = Vec::new();
     let mut funding_tx_info: Vec<TxInputInfo> = Vec::new();
