@@ -235,7 +235,6 @@ impl Wallet for BitcoinCoreProvider {
         &self,
         amount: u64,
         _fee_rate: Option<u64>,
-        lock_utxos: bool,
     ) -> Result<Vec<Utxo>, ManagerError> {
         let client = self.client.lock().unwrap();
         let utxo_res = client
@@ -262,13 +261,6 @@ impl Wallet for BitcoinCoreProvider {
             .collect::<Result<Vec<UtxoWrap>, Error>>()?;
         // TODO(tibo): properly compute the cost of change
         let selection = select_coins(amount, 20, &mut utxo_pool).ok_or(Error::NotEnoughCoins)?;
-
-        if lock_utxos {
-            let outputs: Vec<_> = selection.iter().map(|x| x.0.outpoint).collect();
-            client
-                .lock_unspent(&outputs)
-                .map_err(rpc_err_to_manager_err)?;
-        }
 
         Ok(selection.into_iter().map(|x| x.0).collect())
     }

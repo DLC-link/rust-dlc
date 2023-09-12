@@ -98,12 +98,7 @@ pub trait Wallet: Signer {
     /// be retrieved.
     fn get_new_secret_key(&self) -> Result<SecretKey, Error>;
     /// Get a set of UTXOs to fund the given amount.
-    fn get_utxos_for_amount(
-        &self,
-        amount: u64,
-        fee_rate: Option<u64>,
-        lock_utxos: bool,
-    ) -> Result<Vec<Utxo>, Error>;
+    fn get_utxos_for_amount(&self, amount: u64, fee_rate: Option<u64>) -> Result<Vec<Utxo>, Error>;
     /// Import the provided address.
     fn import_address(&self, address: &Address) -> Result<(), Error>;
 }

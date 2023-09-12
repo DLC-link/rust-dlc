@@ -337,7 +337,7 @@ impl PartyParams {
                 )))?;
                 let total_cet_weight = checked_add!(this_party_cet_base_weight, output_spk_weight)?;
                 let cet_or_refund_fee = util::weight_to_fee(total_cet_weight, fee_rate_per_vb)?;
-                let required_input_funds: u64 =
+                let required_input_funds =
                     checked_add!(self.collateral, fund_fee, cet_or_refund_fee, extra_fee)?;
 
                 if self.input_amount < required_input_funds {

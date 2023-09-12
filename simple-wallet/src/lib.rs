@@ -225,12 +225,7 @@ where
         Ok(seckey)
     }
 
-    fn get_utxos_for_amount(
-        &self,
-        amount: u64,
-        fee_rate: Option<u64>,
-        lock_utxos: bool,
-    ) -> Result<Vec<Utxo>> {
+    fn get_utxos_for_amount(&self, amount: u64, fee_rate: Option<u64>) -> Result<Vec<Utxo>> {
         let org_utxos = self.storage.get_utxos()?;
         let utxos = org_utxos
             .iter()
@@ -255,8 +250,7 @@ where
         let fee_rate = FeeRate::from_sat_per_vb(fee_rate.unwrap() as f32);
         let selection = coin_selection
             .coin_select(self, Vec::new(), utxos, fee_rate, amount, &dummy_drain)
-            .unwrap();
-        // .map_err(|e| Error::WalletError(Box::new(e)))?;
+            .map_err(|e| Error::WalletError(Box::new(e)))?;
         let mut res = Vec::new();
         for utxo in selection.selected {
             let local_utxo = if let BdkUtxo::Local(l) = utxo {
@@ -268,13 +262,6 @@ where
                 .iter()
                 .find(|x| x.tx_out == local_utxo.txout && x.outpoint == local_utxo.outpoint)
                 .unwrap();
-            if lock_utxos {
-                let updated = Utxo {
-                    reserved: true,
-                    ..org.clone()
-                };
-                self.storage.upsert_utxo(&updated)?;
-            }
             res.push(org.clone());
         }
         Ok(res)
