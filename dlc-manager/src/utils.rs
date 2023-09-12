@@ -44,38 +44,20 @@ pub(crate) fn get_new_temporary_id() -> [u8; 32] {
     rand_chacha::ChaCha8Rng::from_seed([0u8; 32]).fill_bytes(&mut res);
     res
 }
-
-/// Logs a message to the browser console using the `web_sys::console::log_1` function.
-///
-/// # Example
-///
-/// ```
-/// # #[macro_use] extern crate my_crate;
-/// clog!("Hello, world!");
-/// ```
+/// The `clog` macro is used to log messages to the browser console using the `web_sys::console::log_1` function.
+/// The macro takes a variable number of arguments, which are passed to the `format!` macro to create a formatted string.
 #[macro_export]
 macro_rules! clog {
-    ( $( $t:tt )* ) => {
+    ($($t:tt)*) => {
         web_sys::console::log_1(&format!( $( $t )* ).into());
-    }
+    };
 }
 
-/// Logs a message to the console using either the `web_sys::console::log_1` function (if running in a WebAssembly environment) or the `println!` macro (if running in a native environment).
-///
-/// # Example
-///
-/// ```
-/// # #[macro_use] extern crate my_crate;
-/// log_to_console!("Hello, world!");
-/// ```
-#[macro_export]
-macro_rules! log_to_console {
-    ( $( $t:tt )* ) => {
-        #[cfg(target_arch = "wasm32")]
-        $crate::clog!( $( $t )* );
-        #[cfg(not(target_arch = "wasm32"))]
-        println!( $( $t )* );
-    }
+fn log_to_console<T>(key: &str, value: T) where T: std::fmt::Debug {
+    #[cfg(target_arch = "wasm32")]
+    clog!("{} {:?}", key, value);
+    #[cfg(not(target_arch = "wasm32"))]
+    println!("{} {:?}", key, value);
 }
 
 pub(crate) fn compute_id(
@@ -117,12 +99,12 @@ where
     let appr_required_amount =
         own_collateral + get_half_common_fee(fee_rate)? + dlc::util::weight_to_fee(124, fee_rate)?;
     let utxos = wallet.get_utxos_for_amount(appr_required_amount, Some(fee_rate), true)?;
-    log_to_console!("fee_rate: {}", fee_rate);
-    log_to_console!("get_half_common_fee: {}", get_half_common_fee(fee_rate)?);
-    log_to_console!("dlc::util::weight_to_fee: {}", dlc::util::weight_to_fee(124, fee_rate)?);
-    log_to_console!("own_collateral: {}", own_collateral);
-    log_to_console!("app_required_amount: {}", appr_required_amount);
-    log_to_console!("wallet.get_utxos_for_amount: {:?}", utxos);
+    log_to_console(key, value)!("fee_rate: {}", fee_rate);
+    log_to_console("get_half_common_fee: {}", get_half_common_fee(fee_rate)?);
+    log_to_console("dlc::util::weight_to_fee: {}", dlc::util::weight_to_fee(124, fee_rate)?);
+    log_to_console("own_collateral: {}", own_collateral);
+    log_to_console("app_required_amount: {}", appr_required_amount);
+    log_to_console("wallet.get_utxos_for_amount: {:?}", utxos);
 
     let mut funding_inputs_info: Vec<FundingInputInfo> = Vec::new();
     let mut funding_tx_info: Vec<TxInputInfo> = Vec::new();
