@@ -15,7 +15,7 @@ use crate::contract::{
 };
 use crate::contract_updater::{accept_contract, verify_accepted_and_sign_contract};
 use crate::error::Error;
-use crate::Signer;
+use crate::{AsyncBlockchain, Signer};
 use crate::{ChannelId, ContractId};
 use bitcoin::Address;
 use bitcoin::Transaction;
@@ -57,7 +57,7 @@ type ClosableContractInfo<'a> = Option<(
 pub struct Manager<W: Deref, B: Deref, S: Deref, O: Deref, T: Deref, F: Deref>
 where
     W::Target: Wallet,
-    B::Target: Blockchain,
+    B::Target: AsyncBlockchain,
     S::Target: Storage,
     O::Target: Oracle,
     T::Target: Time,
@@ -161,7 +161,7 @@ macro_rules! check_for_timed_out_channels {
 impl<W: Deref, B: Deref, S: Deref, O: Deref, T: Deref, F: Deref> Manager<W, B, S, O, T, F>
 where
     W::Target: Wallet,
-    B::Target: Blockchain,
+    B::Target: Blockchain + AsyncBlockchain,
     S::Target: Storage,
     O::Target: Oracle,
     T::Target: Time,
@@ -267,7 +267,7 @@ where
 
     /// Function called to create a new DLC. The offered contract will be stored
     /// and an OfferDlc message returned.
-    pub fn send_offer(
+    pub async fn send_offer(
         &mut self,
         contract_input: &ContractInput,
         counter_party: PublicKey,
@@ -290,7 +290,8 @@ where
             &self.wallet,
             &self.blockchain,
             &self.time,
-        )?;
+        )
+        .await?;
 
         offered_contract.validate()?;
 
@@ -300,7 +301,7 @@ where
     }
 
     /// Function to call to accept a DLC for which an offer was received.
-    pub fn accept_contract_offer(
+    pub async fn accept_contract_offer(
         &mut self,
         contract_id: &ContractId,
     ) -> Result<(ContractId, PublicKey, AcceptDlc), Error> {
@@ -314,7 +315,8 @@ where
             &offered_contract,
             &self.wallet,
             &self.blockchain,
-        )?;
+        )
+        .await?;
 
         self.wallet.import_address(&Address::p2wsh(
             &accepted_contract.dlc_transactions.funding_script_pubkey,
@@ -771,7 +773,7 @@ where
 impl<W: Deref, B: Deref, S: Deref, O: Deref, T: Deref, F: Deref> Manager<W, B, S, O, T, F>
 where
     W::Target: Wallet,
-    B::Target: Blockchain,
+    B::Target: Blockchain + AsyncBlockchain,
     S::Target: Storage,
     O::Target: Oracle,
     T::Target: Time,
@@ -815,7 +817,7 @@ where
     /// Accept a channel that was offered. Returns the [`dlc_messages::channel::AcceptChannel`]
     /// message to be sent, the updated [`crate::ChannelId`] and [`crate::ContractId`],
     /// as well as the public key of the offering node.
-    pub fn accept_channel(
+    pub async fn accept_channel(
         &mut self,
         channel_id: &ChannelId,
     ) -> Result<(AcceptChannel, ChannelId, ContractId, PublicKey), Error> {

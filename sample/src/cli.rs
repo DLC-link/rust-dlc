@@ -192,16 +192,17 @@ pub(crate) async fn poll_for_user_input(
                         .expect("Error deserializing contract input.");
                     let manager_clone = dlc_manager.clone();
                     let is_contract = o == "offercontract";
-                    let offer = tokio::task::spawn_blocking(move || {
-                        if is_contract {
-                            DlcMessage::Offer(
-                                manager_clone
-                                    .lock()
-                                    .unwrap()
-                                    .send_offer(&contract_input, pubkey)
-                                    .expect("Error sending offer"),
-                            )
-                        } else {
+                    let offer = if is_contract {
+                        DlcMessage::Offer(
+                            manager_clone
+                                .lock()
+                                .unwrap()
+                                .send_offer(&contract_input, pubkey)
+                                .await
+                                .expect("Error sending offer"),
+                        )
+                    } else {
+                        tokio::task::spawn_blocking(move || {
                             DlcMessage::OfferChannel(
                                 manager_clone
                                     .lock()
@@ -209,10 +210,11 @@ pub(crate) async fn poll_for_user_input(
                                     .offer_channel(&contract_input, pubkey)
                                     .expect("Error sending offer channel"),
                             )
-                        }
-                    })
-                    .await
-                    .unwrap();
+                        })
+                        .await
+                        .unwrap()
+                    };
+
                     dlc_message_handler.send_message(pubkey, offer);
                     peer_manager.process_events();
                 }
@@ -243,6 +245,7 @@ pub(crate) async fn poll_for_user_input(
                         .lock()
                         .unwrap()
                         .accept_contract_offer(&contract_id)
+                        .await
                         .expect("Error accepting contract.");
                     dlc_message_handler.send_message(node_id, DlcMessage::Accept(msg));
                     peer_manager.process_events();
@@ -335,6 +338,7 @@ pub(crate) async fn poll_for_user_input(
                         .lock()
                         .unwrap()
                         .accept_channel(&channel_id)
+                        .await
                         .expect("Error accepting channel.");
                     dlc_message_handler.send_message(node_id, DlcMessage::AcceptChannel(msg));
                     peer_manager.process_events();

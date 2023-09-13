@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
 use bitcoin::{Block, Transaction, Txid};
-use dlc_manager::{error::Error, Blockchain, Utxo};
+use dlc_manager::{error::Error, AsyncBlockchain, Blockchain, Utxo};
 use lightning::chain::chaininterface::FeeEstimator;
 use simple_wallet::WalletBlockchainProvider;
 
@@ -49,6 +49,12 @@ impl Blockchain for MockBlockchain {
     }
     fn get_transaction_confirmations(&self, _tx_id: &Txid) -> Result<u32, Error> {
         Ok(6)
+    }
+}
+
+impl AsyncBlockchain for MockBlockchain {
+    async fn get_transaction_async(&self, tx_id: &Txid) -> Result<Transaction, Error> {
+        unimplemented!();
     }
 }
 
