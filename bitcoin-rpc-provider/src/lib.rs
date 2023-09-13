@@ -1,3 +1,4 @@
+#![feature(async_fn_in_trait)]
 //! # Bitcoin rpc provider
 
 use std::collections::HashMap;
@@ -16,7 +17,7 @@ use bitcoin::{Address, OutPoint, TxOut};
 use bitcoincore_rpc::{json, Auth, Client, RpcApi};
 use bitcoincore_rpc_json::AddressType;
 use dlc_manager::error::Error as ManagerError;
-use dlc_manager::{Blockchain, Signer, Utxo, Wallet};
+use dlc_manager::{AsyncBlockchain, Blockchain, Signer, Utxo, Wallet};
 use json::EstimateMode;
 use lightning::chain::chaininterface::{ConfirmationTarget, FeeEstimator};
 use log::error;
@@ -368,6 +369,12 @@ impl Blockchain for BitcoinCoreProvider {
                 _ => Err(rpc_err_to_manager_err(e)),
             },
         }
+    }
+}
+
+impl AsyncBlockchain for BitcoinCoreProvider {
+    async fn get_transaction_async(&self, _tx_id: &Txid) -> Result<Transaction, ManagerError> {
+        unimplemented!();
     }
 }
 

@@ -20,12 +20,12 @@ use crate::{
     },
     conversion_utils::get_tx_input_infos,
     error::Error,
-    Blockchain, ChannelId, Signer, Time, Wallet,
+    AsyncBlockchain, ChannelId, Signer, Time, Wallet,
 };
 
 /// Creates an [`OfferedContract`] and [`OfferDlc`] message from the provided
 /// contract and oracle information.
-pub fn offer_contract<C: Signing, W: Deref, B: Deref, T: Deref>(
+pub async fn offer_contract<C: Signing, W: Deref, B: Deref, T: Deref>(
     secp: &Secp256k1<C>,
     contract_input: &ContractInput,
     oracle_announcements: Vec<Vec<OracleAnnouncement>>,
@@ -37,18 +37,19 @@ pub fn offer_contract<C: Signing, W: Deref, B: Deref, T: Deref>(
 ) -> Result<(OfferedContract, OfferDlc), Error>
 where
     W::Target: Wallet,
-    B::Target: Blockchain,
+    B::Target: AsyncBlockchain,
     T::Target: Time,
 {
     contract_input.validate()?;
 
-    let (party_params, _, funding_inputs_info) = crate::utils::get_party_params(
+    let (party_params, _, funding_inputs_info) = crate::utils::get_party_params_async(
         secp,
         contract_input.offer_collateral,
         contract_input.fee_rate,
         wallet,
         blockchain,
-    )?;
+    )
+    .await?;
 
     let offered_contract = OfferedContract::new(
         contract_input,
@@ -67,7 +68,7 @@ where
 
 /// Creates an [`AcceptedContract`] and produces
 /// the accepting party's cet adaptor signatures.
-pub fn accept_contract<W: Deref, B: Deref>(
+pub async fn accept_contract<W: Deref, B: Deref>(
     secp: &Secp256k1<All>,
     offered_contract: &OfferedContract,
     wallet: &W,
@@ -75,17 +76,18 @@ pub fn accept_contract<W: Deref, B: Deref>(
 ) -> Result<(AcceptedContract, AcceptDlc), crate::Error>
 where
     W::Target: Wallet,
-    B::Target: Blockchain,
+    B::Target: AsyncBlockchain,
 {
     let total_collateral = offered_contract.total_collateral;
 
-    let (accept_params, fund_secret_key, funding_inputs) = crate::utils::get_party_params(
+    let (accept_params, fund_secret_key, funding_inputs) = crate::utils::get_party_params_async(
         secp,
         total_collateral - offered_contract.offer_params.collateral,
         offered_contract.fee_rate_per_vb,
         wallet,
         blockchain,
-    )?;
+    )
+    .await?;
 
     let dlc_transactions = dlc::create_dlc_transactions(
         &offered_contract.offer_params,

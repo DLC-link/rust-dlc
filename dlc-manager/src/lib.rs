@@ -1,3 +1,4 @@
+#![feature(async_fn_in_trait)]
 //! # Library providing data structures and functions supporting the execution
 //! and management of DLC.
 
@@ -122,6 +123,12 @@ pub trait Blockchain {
     fn get_transaction(&self, tx_id: &Txid) -> Result<Transaction, Error>;
     /// Get the number of confirmation for the transaction with given id.
     fn get_transaction_confirmations(&self, tx_id: &Txid) -> Result<u32, Error>;
+}
+
+/// Blockchain trait provides access to the bitcoin blockchain.
+pub trait AsyncBlockchain {
+    /// Get the transaction with given id.
+    async fn get_transaction_async(&self, tx_id: &Txid) -> Result<Transaction, Error>;
 }
 
 /// Storage trait provides functionalities to store and retrieve DLCs.

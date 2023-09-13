@@ -89,7 +89,7 @@ pub struct RevokeParams {
     /// Key used to restrict the transaction output path.
     pub own_pk: PublicKey,
     /// Key used to restrict the transaction output path and for generating
-    /// an adaptor signature, that gets revealed when using the transaction.  
+    /// an adaptor signature, that gets revealed when using the transaction.
     pub publish_pk: PublicKey,
     /// Key used to revoke the transaction.
     pub revoke_pk: PublicKey,
@@ -209,7 +209,7 @@ pub fn create_settle_transaction(
         )?)
         / (output.len() as u64);
 
-    for mut o in &mut output {
+    for o in &mut output {
         o.value += remaining_fee;
     }
 

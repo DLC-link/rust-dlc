@@ -1,3 +1,4 @@
+#![feature(async_fn_in_trait)]
 pub mod memory_storage_provider;
 pub mod mock_blockchain;
 pub mod mock_oracle_provider;

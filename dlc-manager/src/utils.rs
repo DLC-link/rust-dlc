@@ -16,7 +16,7 @@ use crate::{
     channel::party_points::PartyBasePoints,
     contract::{contract_info::ContractInfo, AdaptorInfo, FundingInputInfo},
     error::Error,
-    Blockchain, Wallet,
+    AsyncBlockchain, Blockchain, Wallet,
 };
 
 #[cfg(not(feature = "fuzztarget"))]
@@ -97,6 +97,88 @@ where
     let mut total_input = 0;
     for utxo in utxos {
         let prev_tx = blockchain.get_transaction(&utxo.outpoint.txid)?;
+        let mut writer = Vec::new();
+        prev_tx.consensus_encode(&mut writer)?;
+        let prev_tx_vout = utxo.outpoint.vout;
+        let sequence = 0xffffffff;
+        // TODO(tibo): this assumes P2WPKH with low R
+        let max_witness_len = 107;
+        let funding_input = FundingInput {
+            input_serial_id: get_new_serial_id(),
+            prev_tx: writer,
+            prev_tx_vout,
+            sequence,
+            max_witness_len,
+            redeem_script: utxo.redeem_script,
+        };
+        total_input += prev_tx.output[prev_tx_vout as usize].value;
+        funding_tx_info.push((&funding_input).into());
+        let funding_input_info = FundingInputInfo {
+            funding_input,
+            address: Some(utxo.address.clone()),
+        };
+        funding_inputs_info.push(funding_input_info);
+    }
+
+    let party_params = PartyParams {
+        fund_pubkey: funding_pubkey,
+        change_script_pubkey: change_spk,
+        change_serial_id,
+        payout_script_pubkey: payout_spk,
+        payout_serial_id,
+        inputs: funding_tx_info,
+        collateral: own_collateral,
+        input_amount: total_input,
+    };
+
+    Ok((party_params, funding_privkey, funding_inputs_info))
+}
+
+pub(crate) async fn get_party_params_async<C: Signing, W: Deref, B: Deref>(
+    secp: &Secp256k1<C>,
+    own_collateral: u64,
+    fee_rate: u64,
+    wallet: &W,
+    blockchain: &B,
+) -> Result<(PartyParams, SecretKey, Vec<FundingInputInfo>), Error>
+where
+    W::Target: Wallet,
+    B::Target: AsyncBlockchain,
+{
+    let funding_privkey = wallet.get_new_secret_key()?;
+    let funding_pubkey = PublicKey::from_secret_key(secp, &funding_privkey);
+
+    let payout_addr = wallet.get_new_address()?;
+    let payout_spk = payout_addr.script_pubkey();
+    let payout_serial_id = get_new_serial_id();
+    let change_addr = wallet.get_new_address()?;
+    let change_spk = change_addr.script_pubkey();
+    let change_serial_id = get_new_serial_id();
+
+    let utxos: Vec<crate::Utxo>;
+    // Add base cost of fund tx + CET / 2 and a CET output to the collateral.
+    let appr_required_amount;
+    match own_collateral {
+        0 => {
+            appr_required_amount = 0;
+            utxos = Vec::new();
+        }
+        _ => {
+            let common_fee = get_common_fee(fee_rate)?;
+            let total_fee = common_fee + own_collateral;
+            appr_required_amount =
+                own_collateral + total_fee + dlc::util::weight_to_fee(124, fee_rate)?;
+            utxos = wallet.get_utxos_for_amount(appr_required_amount, Some(fee_rate), true)?;
+        }
+    }
+
+    let mut funding_inputs_info: Vec<FundingInputInfo> = Vec::new();
+    let mut funding_tx_info: Vec<TxInputInfo> = Vec::new();
+    let mut total_input = 0;
+    for utxo in utxos {
+        let prev_tx = blockchain
+            .get_transaction_async(&utxo.outpoint.txid)
+            .await?;
         let mut writer = Vec::new();
         prev_tx.consensus_encode(&mut writer)?;
         let prev_tx_vout = utxo.outpoint.vout;
