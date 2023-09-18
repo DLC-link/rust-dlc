@@ -335,8 +335,12 @@ impl PartyParams {
         )))?;
         let total_cet_weight = checked_add!(this_party_cet_base_weight, output_spk_weight)?;
         let cet_or_refund_fee = util::weight_to_fee(total_cet_weight, fee_rate_per_vb)?;
-        let required_input_funds =
-            checked_add!(self.collateral, fund_fee, cet_or_refund_fee, extra_fee)?;
+        let required_input_funds: u64 = if self.collateral == 0 {
+            0
+        } else {
+            checked_add!(self.collateral, fund_fee, cet_or_refund_fee, extra_fee)?
+        };
+
         if self.input_amount < required_input_funds {
             return Err(Error::InvalidArgument(format!("[get_change_output_and_fees] error: input amount is lower than the sum of the collateral plus the required fees => input_amount: {}, collateral: {}, fund fee: {}, cet_or_refund_fee: {}, extra_fee: {}", self.input_amount, self.collateral, fund_fee, cet_or_refund_fee, extra_fee)));
         }
@@ -346,7 +350,11 @@ impl PartyParams {
             script_pubkey: self.change_script_pubkey.clone(),
         };
 
-        Ok((change_output, fund_fee, cet_or_refund_fee))
+        if fee_rate_per_vb == 0 {
+            Ok((change_output, 0, 0))
+        } else {
+            Ok((change_output, fund_fee, cet_or_refund_fee))
+        }
     }
 
     fn get_unsigned_tx_inputs_and_serial_ids(&self, sequence: Sequence) -> (Vec<TxIn>, Vec<u64>) {
@@ -422,7 +430,7 @@ pub(crate) fn create_fund_transaction_with_fees(
     let total_collateral = checked_add!(offer_params.collateral, accept_params.collateral)?;
 
     let (offer_change_output, offer_fund_fee, offer_cet_fee) =
-        offer_params.get_change_output_and_fees(fee_rate_per_vb, extra_fee)?;
+        offer_params.get_change_output_and_fees(0, extra_fee)?;
     let (accept_change_output, accept_fund_fee, accept_cet_fee) =
         accept_params.get_change_output_and_fees(fee_rate_per_vb, extra_fee)?;
 
