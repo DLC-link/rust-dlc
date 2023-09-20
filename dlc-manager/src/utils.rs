@@ -80,8 +80,6 @@ where
     let change_spk = change_addr.script_pubkey();
     let change_serial_id = get_new_serial_id();
 
-    // Add base cost of fund tx + CET / 2 and a CET output to the collateral.
-
     let utxos = match own_collateral {
         0 => Vec::new(),
         _ => {
