@@ -80,15 +80,17 @@ where
     let change_spk = change_addr.script_pubkey();
     let change_serial_id = get_new_serial_id();
 
-    let (appr_required_amount, utxos) = match own_collateral {
-        0 => (0, Vec::new()),
+    // Add base cost of fund tx + CET / 2 and a CET output to the collateral.
+
+    let utxos = match own_collateral {
+        0 => Vec::new(),
         _ => {
             let common_fee = get_common_fee(fee_rate)?;
             let total_fee = common_fee + own_collateral;
             let appr_required_amount =
                 own_collateral + total_fee + dlc::util::weight_to_fee(124, fee_rate)?;
             let utxos = wallet.get_utxos_for_amount(appr_required_amount, Some(fee_rate), true)?;
-            (appr_required_amount, utxos)
+            utxos
         }
     };
 
