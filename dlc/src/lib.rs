@@ -225,6 +225,7 @@ impl fmt::Display for Error {
     }
 }
 
+#[cfg(feature = "std")]
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
@@ -274,13 +275,13 @@ impl PartyParams {
         &self,
         fee_rate_per_vb: u64,
         extra_fee: u64,
-    ) -> Result<(TxOut, u64, u64), Error> {   
+    ) -> Result<(TxOut, u64, u64), Error> {
         let mut inputs_weight: usize = 0;
         for w in &self.inputs {
             let script_weight = util::redeem_script_to_script_sig(&w.redeem_script)
                 .len()
                 .checked_mul(4)
-                .ok_or(Error::InvalidArgument(format!("[get_change_output_and_fees] error: failed to transform a redeem script for a p2sh-p2w* output to a script signature")))?;
+                .ok_or(Error::InvalidArgument("[get_change_output_and_fees] error: failed to transform a redeem script for a p2sh-p2w* output to a script signature".to_string()))?;
             inputs_weight = checked_add!(
                 inputs_weight,
                 TX_INPUT_BASE_WEIGHT,
@@ -292,11 +293,9 @@ impl PartyParams {
         // Value size + script length var_int + ouput script pubkey size
         let change_size = self.change_script_pubkey.len();
         // Change size is scaled by 4 from vBytes to weight units
-        let change_weight = change_size
-            .checked_mul(4)
-            .ok_or(Error::InvalidArgument(format!(
-                "[get_change_output_and_fees] error: failed to calculate change weight"
-            )))?;
+        let change_weight = change_size.checked_mul(4).ok_or(Error::InvalidArgument(
+            "[get_change_output_and_fees] error: failed to calculate change weight".to_string(),
+        ))?;
 
         // Base weight (nLocktime, nVersion, ...) is distributed among parties
         // independently of inputs contributed
@@ -315,13 +314,14 @@ impl PartyParams {
         let this_party_cet_base_weight = CET_BASE_WEIGHT;
 
         // size of the payout script pubkey scaled by 4 from vBytes to weight units
-        let output_spk_weight =
-            self.payout_script_pubkey
-                .len()
-                .checked_mul(4)
-                .ok_or(Error::InvalidArgument(format!(
+        let output_spk_weight = self
+            .payout_script_pubkey
+            .len()
+            .checked_mul(4)
+            .ok_or(Error::InvalidArgument(
             "[get_change_output_and_fees] error: failed to calculate payout script pubkey weight"
-        )))?;
+                .to_string(),
+        ))?;
         let total_cet_weight = checked_add!(this_party_cet_base_weight, output_spk_weight)?;
         let cet_or_refund_fee = util::weight_to_fee(total_cet_weight, fee_rate_per_vb)?;
         let required_input_funds =
@@ -416,7 +416,7 @@ pub(crate) fn create_fund_transaction_with_fees(
     };
     let offer_fund_fee = 0;
     let offer_cet_fee = 0;
-    
+
     let (accept_change_output, accept_fund_fee, accept_cet_fee) =
         accept_params.get_change_output_and_fees(fee_rate_per_vb, extra_fee)?;
 
@@ -490,9 +490,7 @@ pub(crate) fn create_cets_and_refund_tx(
     });
 
     if !has_proper_outcomes {
-        return Err(Error::InvalidArgument(format!(
-            "[create_cets_and_refund_tx] error: payouts don't sum up to the total collateral amount"
-        )));
+        return Err(Error::InvalidArgument("[create_cets_and_refund_tx] error: payouts don't sum up to the total collateral amount".to_string()));
     }
 
     let cet_input = TxIn {
@@ -709,8 +707,7 @@ pub fn get_adaptor_point_from_oracle_info<C: Verification>(
     msgs: &[Vec<Message>],
 ) -> Result<PublicKey, Error> {
     if oracle_infos.is_empty() || msgs.is_empty() {
-        return Err(Error::InvalidArgument(format!("[get_adaptor_point_from_oracle_info] error: oracle info and messages must not be empty"
-        )));
+        return Err(Error::InvalidArgument("[get_adaptor_point_from_oracle_info] error: oracle info and messages must not be empty".to_string()));
     }
 
     let mut oracle_sigpoints = Vec::with_capacity(msgs[0].len());
@@ -733,12 +730,14 @@ pub fn create_cet_adaptor_sig_from_point<C: secp256k1_zkp::Signing>(
 ) -> Result<EcdsaAdaptorSignature, Error> {
     let sig_hash = util::get_sig_hash_msg(cet, 0, funding_script_pubkey, fund_output_value)?;
 
-    Ok(secp256k1_zkp::EcdsaAdaptorSignature::encrypt(
-        secp,
-        &sig_hash,
-        funding_sk,
-        adaptor_point,
-    ))
+    #[cfg(feature = "std")]
+    let res = EcdsaAdaptorSignature::encrypt(secp, &sig_hash, funding_sk, adaptor_point);
+
+    #[cfg(not(feature = "std"))]
+    let res =
+        EcdsaAdaptorSignature::encrypt_no_aux_rand(secp, &sig_hash, funding_sk, adaptor_point);
+
+    Ok(res)
 }
 
 /// Create an adaptor signature for the given cet using the provided oracle infos.
