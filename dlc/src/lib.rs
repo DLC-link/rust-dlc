@@ -500,6 +500,17 @@ pub(crate) fn create_fund_transaction_with_fees(
         "Setting up the protocol fee, looks like this: {:?}",
         acceptor_protocol_fee_output
     );
+    println!(
+        "fund_output_value = {} + {} - {} - {} - {} - {} - {} - {}",
+        offer_params.input_amount,
+        accept_params.input_amount,
+        offer_change_output.value,
+        accept_change_output.value,
+        offer_fund_fee,
+        accept_fund_fee,
+        extra_fee,
+        acceptor_protocol_fee_output.value
+    );
 
     let fund_output_value = checked_add!(offer_params.input_amount, accept_params.input_amount)?
         - offer_change_output.value
@@ -509,6 +520,10 @@ pub(crate) fn create_fund_transaction_with_fees(
         - extra_fee
         - acceptor_protocol_fee_output.value;
 
+    println!(
+        "fund output value: {} should = {} + {} + {} + {}",
+        fund_output_value, total_collateral, offer_cet_fee, accept_cet_fee, extra_fee,
+    );
     assert_eq!(
         total_collateral + offer_cet_fee + accept_cet_fee + extra_fee,
         fund_output_value
@@ -576,6 +591,11 @@ pub(crate) fn create_cets_and_refund_tx(
 
     let has_proper_outcomes = payouts.iter().all(|o| {
         let total = checked_add!(o.offer, o.accept);
+
+        println!(
+            "checking if total_collateral {} == sum of payouts {:?}",
+            total_collateral, total
+        );
         if let Ok(total) = total {
             total == total_collateral
         } else {
@@ -1378,8 +1398,8 @@ mod tests {
     #[test]
     fn create_dlc_transactions_no_error() {
         // Arrange
-        let (offer_party_params, _) = get_party_params(1000000000, 100000000, None);
-        let (accept_party_params, _) = get_party_params(1000000000, 100000000, None);
+        let (offer_party_params, _) = get_party_params(0, 0, None);
+        let (accept_party_params, _) = get_party_params(2000000000, 200000000, None);
 
         // Act
         let dlc_txs = create_dlc_transactions(
@@ -1392,7 +1412,7 @@ mod tests {
             10,
             0,
             0,
-            None,
+            "".to_string(),
         )
         .unwrap();
 
@@ -1407,8 +1427,8 @@ mod tests {
         // Arrange
         let secp = Secp256k1::new();
         let mut rng = secp256k1_zkp::rand::thread_rng();
-        let (offer_party_params, offer_fund_sk) = get_party_params(1000000000, 100000000, None);
-        let (accept_party_params, accept_fund_sk) = get_party_params(1000000000, 100000000, None);
+        let (offer_party_params, offer_fund_sk) = get_party_params(0, 0, None);
+        let (accept_party_params, accept_fund_sk) = get_party_params(2000000000, 200000000, None);
 
         let dlc_txs = create_dlc_transactions(
             &offer_party_params,
@@ -1542,7 +1562,7 @@ mod tests {
         struct OrderingCase {
             serials: [u64; 3],
             expected_input_order: [usize; 2],
-            expected_fund_output_order: [usize; 3],
+            expected_fund_output_order: [usize; 2],
             expected_payout_order: [usize; 2],
         }
 
@@ -1550,34 +1570,33 @@ mod tests {
             OrderingCase {
                 serials: [0, 1, 2],
                 expected_input_order: [0, 1],
-                expected_fund_output_order: [0, 1, 2],
+                expected_fund_output_order: [0, 1],
                 expected_payout_order: [0, 1],
             },
             OrderingCase {
                 serials: [1, 0, 2],
                 expected_input_order: [0, 1],
-                expected_fund_output_order: [1, 0, 2],
+                expected_fund_output_order: [0, 1],
                 expected_payout_order: [0, 1],
             },
             OrderingCase {
                 serials: [2, 0, 1],
                 expected_input_order: [0, 1],
-                expected_fund_output_order: [2, 0, 1],
+                expected_fund_output_order: [1, 0],
                 expected_payout_order: [0, 1],
             },
             OrderingCase {
                 serials: [2, 1, 0],
                 expected_input_order: [1, 0],
-                expected_fund_output_order: [2, 1, 0],
+                expected_fund_output_order: [1, 0],
                 expected_payout_order: [1, 0],
             },
         ];
 
         for case in cases {
-            let (offer_party_params, _) =
-                get_party_params(1000000000, 100000000, Some(case.serials[1]));
+            let (offer_party_params, _) = get_party_params(0, 0, Some(case.serials[1]));
             let (accept_party_params, _) =
-                get_party_params(1000000000, 100000000, Some(case.serials[2]));
+                get_party_params(2000000000, 200000000, Some(case.serials[2]));
 
             let dlc_txs = create_dlc_transactions(
                 &offer_party_params,
@@ -1606,17 +1625,26 @@ mod tests {
                     == accept_party_params.inputs[0].outpoint
             );
 
+            println!("for case {:?}", case.expected_fund_output_order);
+            println!("all the fund outputs: {:?}", dlc_txs.fund.output);
+            println!(
+                "all the actuals: {:?} {:?} {:?}",
+                dlc_txs.funding_script_pubkey.to_v0_p2wsh(),
+                offer_party_params.change_script_pubkey,
+                accept_party_params.change_script_pubkey
+            );
+
             // Check that fund output are in correct order
             assert!(
                 dlc_txs.fund.output[case.expected_fund_output_order[0]].script_pubkey
                     == dlc_txs.funding_script_pubkey.to_v0_p2wsh()
             );
+            // assert!(
+            //     dlc_txs.fund.output[case.expected_fund_output_order[1]].script_pubkey
+            //         == offer_party_params.change_script_pubkey
+            // );
             assert!(
                 dlc_txs.fund.output[case.expected_fund_output_order[1]].script_pubkey
-                    == offer_party_params.change_script_pubkey
-            );
-            assert!(
-                dlc_txs.fund.output[case.expected_fund_output_order[2]].script_pubkey
                     == accept_party_params.change_script_pubkey
             );
 

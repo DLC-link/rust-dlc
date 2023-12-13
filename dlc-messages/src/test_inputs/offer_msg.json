@@ -159,5 +159,7 @@
   "fundOutputSerialId": 17245645112901355593,
   "feeRatePerVb": 2,
   "cetLocktime": 1623133104,
-  "refundLocktime": 1623737904
+  "refundLocktime": 1623737904,
+  "feePercentageDenominator": 0,
+  "feeAddress": ""
 }
