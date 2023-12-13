@@ -1,6 +1,13 @@
 //! Module for working with DLC channels
 
+#[cfg(all(feature = "no-std", not(feature = "std")))]
+extern crate hashbrown;
+
+#[cfg(any(feature = "std", not(feature = "no-std")))]
 use std::collections::HashMap;
+
+#[cfg(all(feature = "no-std", not(feature = "std")))]
+use self::hashbrown::HashMap;
 
 use crate::{signatures_to_secret, util::get_sig_hash_msg, DlcTransactions, PartyParams, Payout};
 
@@ -14,6 +21,7 @@ use secp256k1_zkp::{
     schnorr::Signature as SchnorrSignature, EcdsaAdaptorSignature, PublicKey as SecpPublicKey,
     Secp256k1, SecretKey, Signing, Verification,
 };
+use std::iter::FromIterator;
 
 /**
  * Weight of the buffer transaction:
@@ -89,7 +97,7 @@ pub struct RevokeParams {
     /// Key used to restrict the transaction output path.
     pub own_pk: PublicKey,
     /// Key used to restrict the transaction output path and for generating
-    /// an adaptor signature, that gets revealed when using the transaction.  
+    /// an adaptor signature, that gets revealed when using the transaction.
     pub publish_pk: PublicKey,
     /// Key used to revoke the transaction.
     pub revoke_pk: PublicKey,
@@ -135,12 +143,14 @@ pub fn get_tx_adaptor_signature<C: Signing>(
 ) -> Result<EcdsaAdaptorSignature, Error> {
     let sighash = get_sig_hash_msg(tx, 0, script_pubkey, input_value)?;
 
-    Ok(EcdsaAdaptorSignature::encrypt(
-        secp,
-        &sighash,
-        own_fund_sk,
-        other_publish_key,
-    ))
+    #[cfg(feature = "std")]
+    let res = EcdsaAdaptorSignature::encrypt(secp, &sighash, own_fund_sk, other_publish_key);
+
+    #[cfg(not(feature = "std"))]
+    let res =
+        EcdsaAdaptorSignature::encrypt_no_aux_rand(secp, &sighash, own_fund_sk, other_publish_key);
+
+    Ok(res)
 }
 
 /// Verify that the given adaptor signature is valid with respect to the given
@@ -209,7 +219,7 @@ pub fn create_settle_transaction(
         )?)
         / (output.len() as u64);
 
-    for mut o in &mut output {
+    for o in &mut output {
         o.value += remaining_fee;
     }
 
@@ -244,6 +254,8 @@ pub fn create_channel_transactions(
         fund_lock_time,
         fund_output_serial_id,
         extra_fee,
+        0,
+        "".to_string(),
     )?;
 
     create_renewal_channel_transactions(
@@ -357,7 +369,7 @@ pub fn sign_cet<C: Signing>(
     )?;
     let own_pk = SecpPublicKey::from_secret_key(secp, own_sk);
 
-    let sigs = HashMap::from([
+    let sigs = HashMap::from_iter([
         (
             PublicKey {
                 inner: own_pk,
@@ -370,7 +382,7 @@ pub fn sign_cet<C: Signing>(
 
     descriptor
         .satisfy(&mut cet.input[0], sigs)
-        .map_err(|_| Error::InvalidArgument(format!("[sign_cet] error: couldn't sign CET")))?;
+        .map_err(|_| Error::InvalidArgument("[sign_cet] error: couldn't sign CET".to_string()))?;
 
     Ok(())
 }
@@ -445,9 +457,10 @@ pub fn create_and_sign_punish_buffer_transaction<C: Signing>(
     }
 
     descriptor.satisfy(&mut tx.input[0], sigs).map_err(|_| {
-        Error::InvalidArgument(format!(
+        Error::InvalidArgument(
             "[create_and_sign_punish_buffer_transaction] error: couldn't sign buffer transaction"
-        ))
+                .to_string(),
+        )
     })?;
 
     Ok(tx)
@@ -528,7 +541,7 @@ pub fn create_and_sign_punish_settle_transaction<C: Signing>(
 
     descriptor
         .satisfy(&mut tx.input[0], sigs)
-        .map_err(|_| Error::InvalidArgument(format!("[create_and_sign_punish_settle_transaction] error: couldn't sign revoked settle transaction")))?;
+        .map_err(|_| Error::InvalidArgument("[create_and_sign_punish_settle_transaction] error: couldn't sign revoked settle transaction".to_string()))?;
 
     Ok(tx)
 }

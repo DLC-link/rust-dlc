@@ -271,6 +271,8 @@ where
         &mut self,
         contract_input: &ContractInput,
         counter_party: PublicKey,
+        fee_percentage_denominator: u64,
+        fee_address: Address,
     ) -> Result<OfferDlc, Error> {
         contract_input.validate()?;
         debug!("Creating DLC with {:?}", contract_input);
@@ -290,6 +292,8 @@ where
             &self.wallet,
             &self.blockchain,
             &self.time,
+            fee_percentage_denominator,
+            fee_address,
         )?;
 
         offered_contract.validate()?;
@@ -500,10 +504,10 @@ where
                     c.accepted_contract
                         .offered_contract
                         .contract_info
-                        .get(0)
+                        .first()
                         .unwrap()
                         .oracle_announcements
-                        .get(0)
+                        .first()
                         .unwrap()
                         .oracle_event
                         .event_id
@@ -541,10 +545,10 @@ where
                     c.accepted_contract
                         .offered_contract
                         .contract_info
-                        .get(0)
+                        .first()
                         .unwrap()
                         .oracle_announcements
-                        .get(0)
+                        .first()
                         .unwrap()
                         .oracle_event
                         .event_id
@@ -639,10 +643,10 @@ where
                         .accepted_contract
                         .offered_contract
                         .contract_info
-                        .get(0)
+                        .first()
                         .unwrap()
                         .oracle_announcements
-                        .get(0)
+                        .first()
                         .unwrap()
                         .oracle_event
                         .event_id

@@ -8,7 +8,7 @@ extern crate dlc_manager;
 #[allow(dead_code)]
 mod test_utils;
 
-use bitcoin::Amount;
+use bitcoin::{Address, Amount};
 use dlc_manager::payout_curve::PayoutFunctionPiece;
 use electrs_blockchain_provider::ElectrsBlockchainProvider;
 use log::debug;
@@ -28,6 +28,7 @@ use secp256k1_zkp::rand::{thread_rng, RngCore};
 use secp256k1_zkp::{ecdsa::Signature, EcdsaAdaptorSignature};
 use serde_json::{from_str, to_writer_pretty};
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc::channel,
@@ -578,6 +579,8 @@ fn manager_execution_test(test_params: TestParams, path: TestPath) {
         msg_callback
     );
 
+    // let event_id
+
     let offer_msg = bob_manager_send
         .lock()
         .unwrap()
@@ -586,6 +589,8 @@ fn manager_execution_test(test_params: TestParams, path: TestPath) {
             "0218845781f631c48f1c9709e23092067d06837f30aa0cd0544ac887fe91ddd166"
                 .parse()
                 .unwrap(),
+            0,
+            Address::from_str("1111111111111111111114oLvT2").unwrap(),
         )
         .expect("Send offer error");
 
@@ -651,11 +656,11 @@ fn manager_execution_test(test_params: TestParams, path: TestPath) {
 
             assert_eq!(
                 periodic_check!(alice_manager_send, contract_id, Confirmed),
-                vec![contract_id]
+                vec![(contract_id, EVENT_ID.to_string())]
             );
             assert_eq!(
                 periodic_check!(bob_manager_send, contract_id, Confirmed),
-                vec![contract_id]
+                vec![(contract_id, EVENT_ID.to_string())]
             );
 
             mocks::mock_time::set_time((EVENT_MATURITY as u64) + 1);

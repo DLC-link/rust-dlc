@@ -18,8 +18,6 @@ extern crate secp256k1_zkp;
 pub mod ser_macros;
 pub mod ser_impls;
 
-#[cfg(test)]
-extern crate bitcoin_test_utils;
 #[cfg(any(test, feature = "serde"))]
 extern crate serde;
 
@@ -343,6 +341,11 @@ pub struct OfferDlc {
     pub cet_locktime: u32,
     /// The lock time for the refund transactions.
     pub refund_locktime: u32,
+    /// The denominator `x` for i = `1/x`, where i is the percentage of locked collateral to be paid to the protocol as a fee.
+    /// 0 for no fee
+    pub fee_percentage_denominator: u64,
+    /// The address to which the protocol fee is paid
+    pub fee_address: String,
 }
 
 impl OfferDlc {
@@ -408,7 +411,9 @@ impl_dlc_writeable!(OfferDlc, {
         (fund_output_serial_id, writeable),
         (fee_rate_per_vb, writeable),
         (cet_locktime, writeable),
-        (refund_locktime, writeable)
+        (refund_locktime, writeable),
+        (fee_percentage_denominator, writeable),
+        (fee_address, writeable)
 });
 
 /// Contains information about a party wishing to accept a DLC offer. The contained
@@ -538,7 +543,7 @@ macro_rules! impl_type_writeable_for_enum {
        }
 
        impl Writeable for $type_name {
-            fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ::std::io::Error> {
+            fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ::lightning::io::Error> {
                 match self {
                    $($type_name::$variant_name(v) => v.write(writer),)*
                 }

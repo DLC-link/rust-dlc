@@ -38,9 +38,7 @@
                   "announcementSignature": "909a7dbba1180d50f73f0e595b20a5120a6da0aa461c81e50c54273aba6f46f7a661ffa6d3a164ed503ecbf9256f7c9fb265ca7c0bb8485ba3737e1b99a8fec6",
                   "oraclePublicKey": "73fca9bb2fb07f932a522cadc5ef3795f6bdc1624341dd342115e54aa016a3fa",
                   "oracleEvent": {
-                    "oracleNonces": [
-                      "0689b7bc48b55b02ff9fb29e569c02a67f4c1523eacf515e1504d31f6b6890fd"
-                    ],
+                    "oracleNonces": ["0689b7bc48b55b02ff9fb29e569c02a67f4c1523eacf515e1504d31f6b6890fd"],
                     "eventMaturityEpoch": 1623133104,
                     "eventDescriptor": {
                       "enumEvent": {
@@ -54,9 +52,7 @@
                   "announcementSignature": "2059ae07da56544c50cb4ad1b30055450429b8bf696609fb56e4e7b96bdb41bf0de5819d9e2ab8303c110f137ef00a365533ca155a4ea093ecd8837a7116eafd",
                   "oraclePublicKey": "e3ddf669b499bec6f95b9de9b3dd6f47068c68cee3897a673134ba5457f75540",
                   "oracleEvent": {
-                    "oracleNonces": [
-                      "749a8dfb7855b610458651c9f5fc8064058305cf0b8e88ff2ab2a70cff7c155c"
-                    ],
+                    "oracleNonces": ["749a8dfb7855b610458651c9f5fc8064058305cf0b8e88ff2ab2a70cff7c155c"],
                     "eventMaturityEpoch": 1623133104,
                     "eventDescriptor": {
                       "enumEvent": {
@@ -70,9 +66,7 @@
                   "announcementSignature": "a036e6e89cd34ceec53974d0513b567e03558ef63b4bbd4e13dfc15c451fbb79e90c9191b7b28d2122387a7ef12e984d5cbff474ff44d86f5b57092b49e14faa",
                   "oraclePublicKey": "64ea9b9a6786d2242ea99299fa9d4fce9515d99b4bedd884bb417cd7c1ee3a8e",
                   "oracleEvent": {
-                    "oracleNonces": [
-                      "37faf17a1ebdd2b558ac3547b3935b2903425fb1566e42329b8b0011027bbce8"
-                    ],
+                    "oracleNonces": ["37faf17a1ebdd2b558ac3547b3935b2903425fb1566e42329b8b0011027bbce8"],
                     "eventMaturityEpoch": 1623133104,
                     "eventDescriptor": {
                       "enumEvent": {
@@ -86,9 +80,7 @@
                   "announcementSignature": "79be467e5f2db1bcc974b9f0a046f797bb2815455b05aa292745a0c5821a19851a4e7d67ccc3e5a48668d4869f57710b9de31e81d3388d5a3a19e5ac967a6cfa",
                   "oraclePublicKey": "21be122c6ed2b4dcbea17729664b3799f868b54c0bfe37c680ec53e2ac0a1e14",
                   "oracleEvent": {
-                    "oracleNonces": [
-                      "c6f2925f4a87c0dbabec87dfdf9c26efc147a80f09434383bd7a5125ac411c07"
-                    ],
+                    "oracleNonces": ["c6f2925f4a87c0dbabec87dfdf9c26efc147a80f09434383bd7a5125ac411c07"],
                     "eventMaturityEpoch": 1623133104,
                     "eventDescriptor": {
                       "enumEvent": {
@@ -102,9 +94,7 @@
                   "announcementSignature": "03117364ded4b7425782d722a63c4d28ab18bff89b08899b083b797f10294a6380881024d35dcdccdfdae23f2119c316797df79632306bdeddbc4ab5fb411dd4",
                   "oraclePublicKey": "5faa94d2507e143e96b85bcf06ca582fac6950552ea2443bae54634e71872b92",
                   "oracleEvent": {
-                    "oracleNonces": [
-                      "0be0dde239f6b90e677f0d2a1f945bdd373667ca34be72d06ca9259fed2d48df"
-                    ],
+                    "oracleNonces": ["0be0dde239f6b90e677f0d2a1f945bdd373667ca34be72d06ca9259fed2d48df"],
                     "eventMaturityEpoch": 1623133104,
                     "eventDescriptor": {
                       "enumEvent": {
@@ -348,5 +338,7 @@
   "fundOutputSerialId": 16318646099148843066,
   "feeRatePerVb": 2,
   "cetLocktime": 1623133103,
-  "refundLocktime": 1623737904
+  "refundLocktime": 1623737904,
+  "feePercentageDenominator": 0,
+  "feeAddress": ""
 }

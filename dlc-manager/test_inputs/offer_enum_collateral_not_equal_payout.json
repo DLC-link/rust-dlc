@@ -1,37 +1,7 @@
 {
   "id": [
-    155,
-    212,
-    62,
-    219,
-    175,
-    95,
-    42,
-    204,
-    223,
-    54,
-    197,
-    38,
-    211,
-    63,
-    152,
-    35,
-    68,
-    201,
-    208,
-    36,
-    124,
-    66,
-    82,
-    30,
-    41,
-    1,
-    4,
-    234,
-    154,
-    144,
-    105,
-    176
+    155, 212, 62, 219, 175, 95, 42, 204, 223, 54, 197, 38, 211, 63, 152, 35, 68, 201, 208, 36, 124, 66, 82, 30, 41, 1,
+    4, 234, 154, 144, 105, 176
   ],
   "isOfferParty": false,
   "contractInfo": [
@@ -75,9 +45,7 @@
           "announcementSignature": "afc2705c66bb8402c615ba757a02e11acd844a2275cbfb59dbe3b8046832c44ba7f4bd5c2147f6798cf01d1828d633ff8652d0a32a7b9fe37fd599b51a2757af",
           "oraclePublicKey": "db0b565c927bd86c5877cb6f56fb3281100eaf88b99a8d5f0717565429e4774d",
           "oracleEvent": {
-            "oracleNonces": [
-              "2bd5c8e9703d13d094131acd9af1f062d6aab5ac9de4550dcaecf2a1de8d12aa"
-            ],
+            "oracleNonces": ["2bd5c8e9703d13d094131acd9af1f062d6aab5ac9de4550dcaecf2a1de8d12aa"],
             "eventMaturityEpoch": 1623133104,
             "eventDescriptor": {
               "enumEvent": {
@@ -91,9 +59,7 @@
           "announcementSignature": "b399ebc42a8ccea43058615aeed21ed6edddb35ec6de92628286532d9fb8b44924771e6c4e228aa3d0928df640b695670d2a0fdda86dc8fe8e3fe1f0638e3c81",
           "oraclePublicKey": "9776b9399283a4f12fa61cb65a5e43bbf483f0d3d6b3c689d02648af503003be",
           "oracleEvent": {
-            "oracleNonces": [
-              "ca65995f15e6cbf3cf6c64576f037f3939b981538020c868a06b869c9e2399d3"
-            ],
+            "oracleNonces": ["ca65995f15e6cbf3cf6c64576f037f3939b981538020c868a06b869c9e2399d3"],
             "eventMaturityEpoch": 1623133104,
             "eventDescriptor": {
               "enumEvent": {
@@ -107,9 +73,7 @@
           "announcementSignature": "7fd48768a78ffaaf2d16cc5a47c7224c745f2560c63af0d1e67d0ccecaeb07e80d906fa9df389ec4782b52c4c9410745eaf01fa5a143146bf3855e3695d35516",
           "oraclePublicKey": "3de8d1ec423c641d2aecf3f39808a942bb2eb371a04a00323a927ec607b015ff",
           "oracleEvent": {
-            "oracleNonces": [
-              "a49b73a5260e01713f14474ac140476ae30fbbfd5134341db6e6654eb845eb71"
-            ],
+            "oracleNonces": ["a49b73a5260e01713f14474ac140476ae30fbbfd5134341db6e6654eb845eb71"],
             "eventMaturityEpoch": 1623133104,
             "eventDescriptor": {
               "enumEvent": {
@@ -158,5 +122,7 @@
   "fundOutputSerialId": 12412566359681147037,
   "feeRatePerVb": 2,
   "cetLocktime": 1623133104,
-  "refundLocktime": 1623737904
+  "refundLocktime": 1623737904,
+  "feePercentageDenominator": 0,
+  "feeAddress": ""
 }

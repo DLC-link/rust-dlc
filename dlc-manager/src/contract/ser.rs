@@ -26,9 +26,9 @@ use dlc_trie::multi_oracle_trie::{MultiOracleTrie, MultiOracleTrieDump};
 use dlc_trie::multi_oracle_trie_with_diff::{MultiOracleTrieWithDiff, MultiOracleTrieWithDiffDump};
 use dlc_trie::multi_trie::{MultiTrieDump, MultiTrieNodeData, TrieNodeInfo};
 use dlc_trie::{OracleNumericInfo, RangeInfo};
+use lightning::io::Read;
 use lightning::ln::msgs::DecodeError;
 use lightning::util::ser::{Readable, Writeable, Writer};
-use std::io::Read;
 
 /// Trait used to de/serialize an object to/from a vector of bytes.
 pub trait Serializable
@@ -36,7 +36,7 @@ where
     Self: Sized,
 {
     /// Serialize the object.
-    fn serialize(&self) -> Result<Vec<u8>, ::std::io::Error>;
+    fn serialize(&self) -> Result<Vec<u8>, lightning::io::Error>;
     /// Deserialize the object.
     fn deserialize<R: Read>(reader: &mut R) -> Result<Self, DecodeError>;
 }
@@ -45,7 +45,7 @@ impl<T> Serializable for T
 where
     T: Writeable + Readable,
 {
-    fn serialize(&self) -> Result<Vec<u8>, ::std::io::Error> {
+    fn serialize(&self) -> Result<Vec<u8>, lightning::io::Error> {
         let mut buffer = Vec::new();
         self.write(&mut buffer)?;
         Ok(buffer)
@@ -99,7 +99,9 @@ impl_dlc_writeable!(OfferedContract, {
     (fee_rate_per_vb, writeable),
     (cet_locktime, writeable),
     (refund_locktime, writeable),
-    (counter_party, writeable)
+    (counter_party, writeable),
+    (fee_percentage_denominator, writeable),
+    (fee_address, writeable)
 });
 impl_dlc_writeable_external!(RangeInfo, range_info, { (cet_index, usize), (adaptor_index, usize)});
 impl_dlc_writeable_enum!(AdaptorInfo,;; (0, Numerical, write_multi_oracle_trie, read_multi_oracle_trie), (1, NumericalWithDifference, write_multi_oracle_trie_with_diff, read_multi_oracle_trie_with_diff); (2, Enum));
@@ -160,8 +162,8 @@ impl_dlc_writeable_external!(TrieNodeInfo, trie_node_info, { (trie_index, usize)
 fn write_digit_node_data_trie<W: Writer>(
     input: &DigitNodeData<Vec<TrieNodeInfo>>,
     writer: &mut W,
-) -> Result<(), ::std::io::Error> {
-    let cb = |x: &Vec<TrieNodeInfo>, writer: &mut W| -> Result<(), ::std::io::Error> {
+) -> Result<(), lightning::io::Error> {
+    let cb = |x: &Vec<TrieNodeInfo>, writer: &mut W| -> Result<(), lightning::io::Error> {
         write_vec_cb(x, writer, &trie_node_info::write)
     };
     write_digit_node_data(input, writer, &cb)
@@ -179,7 +181,7 @@ fn read_digit_node_data_trie<R: Read>(
 fn write_digit_node_data_range<W: Writer>(
     input: &DigitNodeData<RangeInfo>,
     writer: &mut W,
-) -> Result<(), ::std::io::Error> {
+) -> Result<(), lightning::io::Error> {
     write_digit_node_data(input, writer, &range_info::write)
 }
 
@@ -192,8 +194,8 @@ fn read_digit_node_data_range<R: Read>(
 fn write_digit_node_data_vec_range<W: Writer>(
     input: &DigitNodeData<Vec<RangeInfo>>,
     writer: &mut W,
-) -> Result<(), ::std::io::Error> {
-    let cb = |x: &Vec<RangeInfo>, writer: &mut W| -> Result<(), ::std::io::Error> {
+) -> Result<(), lightning::io::Error> {
+    let cb = |x: &Vec<RangeInfo>, writer: &mut W| -> Result<(), lightning::io::Error> {
         write_vec_cb(x, writer, &range_info::write)
     };
     write_digit_node_data(input, writer, &cb)
@@ -212,14 +214,14 @@ fn write_digit_node_data<W: Writer, T, F>(
     input: &DigitNodeData<T>,
     writer: &mut W,
     cb: &F,
-) -> Result<(), ::std::io::Error>
+) -> Result<(), lightning::io::Error>
 where
-    F: Fn(&T, &mut W) -> Result<(), ::std::io::Error>,
+    F: Fn(&T, &mut W) -> Result<(), lightning::io::Error>,
 {
     write_option_cb(&input.data, writer, &cb)?;
     write_vec_cb(&input.prefix, writer, &write_usize)?;
-    let cb = |x: &Vec<Option<usize>>, writer: &mut W| -> Result<(), ::std::io::Error> {
-        let cb = |y: &Option<usize>, writer: &mut W| -> Result<(), ::std::io::Error> {
+    let cb = |x: &Vec<Option<usize>>, writer: &mut W| -> Result<(), lightning::io::Error> {
+        let cb = |y: &Option<usize>, writer: &mut W| -> Result<(), lightning::io::Error> {
             write_option_cb(y, writer, &write_usize)
         };
         write_vec_cb(x, writer, &cb)
@@ -252,7 +254,7 @@ where
 fn write_multi_oracle_trie<W: Writer>(
     trie: &MultiOracleTrie,
     w: &mut W,
-) -> Result<(), ::std::io::Error> {
+) -> Result<(), lightning::io::Error> {
     multi_oracle_trie_dump::write(&trie.dump(), w)
 }
 
@@ -264,7 +266,7 @@ fn read_multi_oracle_trie<R: Read>(reader: &mut R) -> Result<MultiOracleTrie, De
 fn write_multi_oracle_trie_with_diff<W: Writer>(
     trie: &MultiOracleTrieWithDiff,
     w: &mut W,
-) -> Result<(), ::std::io::Error> {
+) -> Result<(), lightning::io::Error> {
     multi_oracle_trie_with_diff_dump::write(&trie.dump(), w)
 }
 
