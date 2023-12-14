@@ -20,7 +20,6 @@ extern crate secp256k1_zkp;
 #[cfg(feature = "serde")]
 extern crate serde;
 
-use bitcoin::consensus::Encodable;
 use bitcoin::secp256k1::Scalar;
 use bitcoin::{
     blockdata::{
@@ -38,7 +37,6 @@ use secp256k1_zkp::{
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use std::fmt::Write;
 use std::str::FromStr;
 
 pub mod channel;
@@ -315,23 +313,10 @@ impl PartyParams {
                         .to_string(),
                 ))?;
 
-        println!(
-            "**** using protocol fee weight of {} from spk len {} ****",
-            protocol_fee_weight, protocol_fee_script_pubkey_len
-        );
-
-        println!(
-            "compared to change values of {} and {}",
-            change_weight, change_size
-        );
         // Base weight (nLocktime, nVersion, ...) is distributed among parties
         // independently of inputs contributed
         let this_party_fund_base_weight = FUND_TX_BASE_WEIGHT;
 
-        // println all the following vars
-        println!(
-            "**** all weights {this_party_fund_base_weight} {inputs_weight} {change_weight} {} {} ****", protocol_fee_weight + 36, 36
-        );
         let total_fund_weight = checked_add!(
             this_party_fund_base_weight,
             inputs_weight,
@@ -339,7 +324,6 @@ impl PartyParams {
             protocol_fee_weight + 36,
             36
         )?;
-        println!("**** using total fund weight of {} ****", total_fund_weight);
         let fund_fee = util::weight_to_fee(total_fund_weight, fee_rate_per_vb)?;
 
         // Base weight (nLocktime, nVersion, funding input ...) is distributed
@@ -479,8 +463,7 @@ pub(crate) fn create_fund_transaction_with_fees(
             ),
         };
 
-    println!("desired value for fee: {:?}", (protocol_fee_amount));
-    let acceptor_protocol_fee_output = TxOut {
+    let protocol_fee_output = TxOut {
         value: protocol_fee_amount,
         script_pubkey: protocol_fee_address.script_pubkey(),
     };
@@ -493,24 +476,8 @@ pub(crate) fn create_fund_transaction_with_fees(
             fee_rate_per_vb,
             extra_fee,
             protocol_fee_amount,
-            acceptor_protocol_fee_output.script_pubkey.len(),
+            protocol_fee_output.script_pubkey.len(),
         )?;
-
-    println!(
-        "Setting up the protocol fee, looks like this: {:?}",
-        acceptor_protocol_fee_output
-    );
-    println!(
-        "fund_output_value = {} + {} - {} - {} - {} - {} - {} - {}",
-        offer_params.input_amount,
-        accept_params.input_amount,
-        offer_change_output.value,
-        accept_change_output.value,
-        offer_fund_fee,
-        accept_fund_fee,
-        extra_fee,
-        acceptor_protocol_fee_output.value
-    );
 
     let fund_output_value = checked_add!(offer_params.input_amount, accept_params.input_amount)?
         - offer_change_output.value
@@ -518,12 +485,8 @@ pub(crate) fn create_fund_transaction_with_fees(
         - offer_fund_fee
         - accept_fund_fee
         - extra_fee
-        - acceptor_protocol_fee_output.value;
+        - protocol_fee_output.value;
 
-    println!(
-        "fund output value: {} should = {} + {} + {} + {}",
-        fund_output_value, total_collateral, offer_cet_fee, accept_cet_fee, extra_fee,
-    );
     assert_eq!(
         total_collateral + offer_cet_fee + accept_cet_fee + extra_fee,
         fund_output_value
@@ -532,7 +495,7 @@ pub(crate) fn create_fund_transaction_with_fees(
     assert_eq!(
         offer_params.input_amount + accept_params.input_amount,
         fund_output_value
-            + acceptor_protocol_fee_output.value
+            + protocol_fee_output.value
             + accept_change_output.value
             + offer_fund_fee
             + accept_fund_fee
@@ -548,6 +511,7 @@ pub(crate) fn create_fund_transaction_with_fees(
     let funding_script_pubkey =
         make_funding_redeemscript(&offer_params.fund_pubkey, &accept_params.fund_pubkey);
 
+    let protocol_fee_serial_id = accept_params.change_serial_id + 1 as u64;
     let fund_tx = create_funding_transaction(
         &funding_script_pubkey,
         fund_output_value,
@@ -555,27 +519,17 @@ pub(crate) fn create_fund_transaction_with_fees(
         &offer_inputs_serial_ids,
         &accept_tx_ins,
         &accept_inputs_serial_ids,
-        acceptor_protocol_fee_output,
-        accept_params.change_serial_id + 1 as u64, // do this better, also include the change offer output as well as the new protocol fee out
+        offer_change_output,
+        offer_params.change_serial_id,
         accept_change_output,
         accept_params.change_serial_id,
+        protocol_fee_output,
+        protocol_fee_serial_id, // do this better, also include the change offer output as well as the new protocol fee out
         fund_output_serial_id,
         fund_lock_time,
     );
 
-    println!("\n\nfund tx: \n{:?}\n\n", tx_to_string(&fund_tx));
-
     Ok((fund_tx, funding_script_pubkey))
-}
-
-pub(crate) fn tx_to_string(tx: &Transaction) -> String {
-    let mut writer = Vec::new();
-    tx.consensus_encode(&mut writer).unwrap();
-    let mut serialized = String::new();
-    for x in writer {
-        write!(&mut serialized, "{:02x}", x).unwrap();
-    }
-    serialized
 }
 
 pub(crate) fn create_cets_and_refund_tx(
@@ -592,10 +546,6 @@ pub(crate) fn create_cets_and_refund_tx(
     let has_proper_outcomes = payouts.iter().all(|o| {
         let total = checked_add!(o.offer, o.accept);
 
-        println!(
-            "checking if total_collateral {} == sum of payouts {:?}",
-            total_collateral, total
-        );
         if let Ok(total) = total {
             total == total_collateral
         } else {
@@ -723,6 +673,8 @@ pub fn create_funding_transaction(
     offer_change_serial_id: u64,
     accept_change_output: TxOut,
     accept_change_serial_id: u64,
+    protocol_fee_output: TxOut,
+    protocol_fee_serial_id: u64,
     fund_output_serial_id: u64,
     lock_time: u32,
 ) -> Transaction {
@@ -736,18 +688,21 @@ pub fn create_funding_transaction(
             fund_output_serial_id,
             offer_change_serial_id,
             accept_change_serial_id,
+            protocol_fee_serial_id,
         ];
-        println!("serial_ids: {:?}", serial_ids);
         util::discard_dust(
             util::order_by_serial_ids(
-                vec![fund_tx_out, offer_change_output, accept_change_output],
+                vec![
+                    fund_tx_out,
+                    offer_change_output,
+                    accept_change_output,
+                    protocol_fee_output,
+                ],
                 &serial_ids,
             ),
             DUST_LIMIT,
         )
     };
-
-    println!("outputs as a vector: {:?}", output);
 
     let input = util::order_by_serial_ids(
         [offer_inputs, accept_inputs].concat(),
@@ -1129,6 +1084,10 @@ mod tests {
             value: change,
             script_pubkey: Script::new(),
         };
+        let protocol_fee_output = TxOut {
+            value: 0,
+            script_pubkey: Script::new(),
+        };
         let funding_script_pubkey = make_funding_redeemscript(&pk, &pk1);
 
         let transaction = create_funding_transaction(
@@ -1142,6 +1101,8 @@ mod tests {
             0,
             accept_change_output,
             1,
+            protocol_fee_output,
+            2,
             0,
             0,
         );
@@ -1173,6 +1134,10 @@ mod tests {
             value: change,
             script_pubkey: Script::new(),
         };
+        let protocol_fee_output = TxOut {
+            value: 0,
+            script_pubkey: Script::new(),
+        };
 
         let funding_script_pubkey = make_funding_redeemscript(&pk, &pk1);
 
@@ -1187,6 +1152,8 @@ mod tests {
             0,
             accept_change_output,
             1,
+            protocol_fee_output,
+            2,
             0,
             0,
         );
@@ -1214,6 +1181,10 @@ mod tests {
         let accept_change_output = TxOut {
             value: change,
             script_pubkey: accept_change_address.script_pubkey(),
+        };
+        let protocol_fee_output = TxOut {
+            value: 0,
+            script_pubkey: Script::new(),
         };
 
         let offer_input = TxIn {
@@ -1272,6 +1243,8 @@ mod tests {
             0,
             accept_change_output,
             1,
+            protocol_fee_output,
+            2,
             0,
             0,
         );
@@ -1623,15 +1596,6 @@ mod tests {
             assert!(
                 dlc_txs.fund.input[case.expected_input_order[1]].previous_output
                     == accept_party_params.inputs[0].outpoint
-            );
-
-            println!("for case {:?}", case.expected_fund_output_order);
-            println!("all the fund outputs: {:?}", dlc_txs.fund.output);
-            println!(
-                "all the actuals: {:?} {:?} {:?}",
-                dlc_txs.funding_script_pubkey.to_v0_p2wsh(),
-                offer_party_params.change_script_pubkey,
-                accept_party_params.change_script_pubkey
             );
 
             // Check that fund output are in correct order
