@@ -321,7 +321,7 @@ impl PartyParams {
             this_party_fund_base_weight,
             inputs_weight,
             change_weight,
-            protocol_fee_weight + 9,
+            protocol_fee_weight + 36,
             36
         )?;
         let fund_fee = util::weight_to_fee(total_fund_weight, fee_rate_per_vb)?;
@@ -463,7 +463,7 @@ pub(crate) fn create_fund_transaction_with_fees(
             ),
         };
 
-    let acceptor_protocol_fee_output = TxOut {
+    let protocol_fee_output = TxOut {
         value: protocol_fee_amount,
         script_pubkey: protocol_fee_address.script_pubkey(),
     };
@@ -476,7 +476,7 @@ pub(crate) fn create_fund_transaction_with_fees(
             fee_rate_per_vb,
             extra_fee,
             protocol_fee_amount,
-            acceptor_protocol_fee_output.script_pubkey.len(),
+            protocol_fee_output.script_pubkey.len(),
         )?;
 
     let fund_output_value = checked_add!(offer_params.input_amount, accept_params.input_amount)?
@@ -485,7 +485,7 @@ pub(crate) fn create_fund_transaction_with_fees(
         - offer_fund_fee
         - accept_fund_fee
         - extra_fee
-        - acceptor_protocol_fee_output.value;
+        - protocol_fee_output.value;
 
     assert_eq!(
         total_collateral + offer_cet_fee + accept_cet_fee + extra_fee,
@@ -495,7 +495,7 @@ pub(crate) fn create_fund_transaction_with_fees(
     assert_eq!(
         offer_params.input_amount + accept_params.input_amount,
         fund_output_value
-            + acceptor_protocol_fee_output.value
+            + protocol_fee_output.value
             + accept_change_output.value
             + offer_fund_fee
             + accept_fund_fee
@@ -511,6 +511,7 @@ pub(crate) fn create_fund_transaction_with_fees(
     let funding_script_pubkey =
         make_funding_redeemscript(&offer_params.fund_pubkey, &accept_params.fund_pubkey);
 
+    let protocol_fee_serial_id = accept_params.change_serial_id + 1 as u64;
     let fund_tx = create_funding_transaction(
         &funding_script_pubkey,
         fund_output_value,
@@ -518,10 +519,12 @@ pub(crate) fn create_fund_transaction_with_fees(
         &offer_inputs_serial_ids,
         &accept_tx_ins,
         &accept_inputs_serial_ids,
-        acceptor_protocol_fee_output,
-        accept_params.change_serial_id + 1 as u64, // do this better, also include the change offer output as well as the new protocol fee out
+        offer_change_output,
+        offer_params.change_serial_id,
         accept_change_output,
         accept_params.change_serial_id,
+        protocol_fee_output,
+        protocol_fee_serial_id, // do this better, also include the change offer output as well as the new protocol fee out
         fund_output_serial_id,
         fund_lock_time,
     );
@@ -670,6 +673,8 @@ pub fn create_funding_transaction(
     offer_change_serial_id: u64,
     accept_change_output: TxOut,
     accept_change_serial_id: u64,
+    protocol_fee_output: TxOut,
+    protocol_fee_serial_id: u64,
     fund_output_serial_id: u64,
     lock_time: u32,
 ) -> Transaction {
@@ -683,10 +688,16 @@ pub fn create_funding_transaction(
             fund_output_serial_id,
             offer_change_serial_id,
             accept_change_serial_id,
+            protocol_fee_serial_id,
         ];
         util::discard_dust(
             util::order_by_serial_ids(
-                vec![fund_tx_out, offer_change_output, accept_change_output],
+                vec![
+                    fund_tx_out,
+                    offer_change_output,
+                    accept_change_output,
+                    protocol_fee_output,
+                ],
                 &serial_ids,
             ),
             DUST_LIMIT,
@@ -1073,6 +1084,10 @@ mod tests {
             value: change,
             script_pubkey: Script::new(),
         };
+        let protocol_fee_output = TxOut {
+            value: 0,
+            script_pubkey: Script::new(),
+        };
         let funding_script_pubkey = make_funding_redeemscript(&pk, &pk1);
 
         let transaction = create_funding_transaction(
@@ -1086,6 +1101,8 @@ mod tests {
             0,
             accept_change_output,
             1,
+            protocol_fee_output,
+            2,
             0,
             0,
         );
@@ -1117,6 +1134,10 @@ mod tests {
             value: change,
             script_pubkey: Script::new(),
         };
+        let protocol_fee_output = TxOut {
+            value: 0,
+            script_pubkey: Script::new(),
+        };
 
         let funding_script_pubkey = make_funding_redeemscript(&pk, &pk1);
 
@@ -1131,6 +1152,8 @@ mod tests {
             0,
             accept_change_output,
             1,
+            protocol_fee_output,
+            2,
             0,
             0,
         );
@@ -1158,6 +1181,10 @@ mod tests {
         let accept_change_output = TxOut {
             value: change,
             script_pubkey: accept_change_address.script_pubkey(),
+        };
+        let protocol_fee_output = TxOut {
+            value: 0,
+            script_pubkey: Script::new(),
         };
 
         let offer_input = TxIn {
@@ -1216,6 +1243,8 @@ mod tests {
             0,
             accept_change_output,
             1,
+            protocol_fee_output,
+            2,
             0,
             0,
         );
